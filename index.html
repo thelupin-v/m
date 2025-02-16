@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MagicManx - Stock Tracker</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            width: 80%;
+            margin: 20px auto;
+            background: #fff;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .form-group {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+        .form-group input {
+            padding: 10px;
+            font-size: 16px;
+            margin-right: 10px;
+            width: 300px;
+        }
+        .form-group button {
+            padding: 10px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .dashboard {
+            margin-top: 20px;
+        }
+        .symbol {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            margin-bottom: 10px;
+            cursor: pointer;
+        }
+        .symbol:hover {
+            background: #efefef;
+        }
+        #chart {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>MagicManx - Stock Tracker</h1>
+        <div class="form-group">
+            <input type="text" id="symbolInput" placeholder="Enter Stock Symbol">
+            <button onclick="addSymbol()">Track Symbol</button>
+        </div>
+        <div class="dashboard" id="dashboard"></div>
+        <div id="chart">
+            <canvas id="stockChart"></canvas>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            loadSymbols();
+        });
+
+        const apiKey = '3U0UB0BN2C2OMO6Y';
+        const dashboard = document.getElementById('dashboard');
+        const chartCanvas = document.getElementById('stockChart').getContext('2d');
+        let stockChart;
+
+        function addSymbol() {
+            const symbol = document.getElementById('symbolInput').value.toUpperCase();
+            if (symbol) {
+                saveSymbol(symbol);
+                fetchStockData(symbol);
+                document.getElementById('symbolInput').value = '';
+            }
+        }
+
+        function saveSymbol(symbol) {
+            let symbols = getSymbols();
+            if (!symbols.includes(symbol)) {
+                symbols.push(symbol);
+                document.cookie = `symbols=${JSON.stringify(symbols)}; path=/`;
+            }
+        }
+
+        function getSymbols() {
+            const name = 'symbols=';
+            const decodedCookie = decodeURIComponent(document.cookie);
+            const ca = decodedCookie.split(';');
+            for(let i = 0; i < ca.length; i++) {
+                let c = ca[i];
+                while (c.charAt(0) === ' ') {
+                    c = c.substring(1);
+                }
+                if (c.indexOf(name) === 0) {
+                    return JSON.parse(c.substring(name.length, c.length));
+                }
+            }
+            return [];
+        }
+
+        function loadSymbols() {
+            const symbols = getSymbols();
+            symbols.forEach(symbol => {
+                fetchStockData(symbol);
+            });
+        }
+
+        function fetchStockData(symbol) {
+            fetch(`https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${symbol}&apikey=${apiKey}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data['Time Series (Daily)']) {
+                        displaySymbol(symbol);
+                    } else {
+                        alert('Invalid Symbol');
+                    }
+                });
+        }
+
+        function displaySymbol(symbol) {
+            const div = document.createElement('div');
+            div.className = 'symbol';
+            div.innerText = symbol;
+            div.onclick = () => showChart(symbol);
+            dashboard.appendChild(div);
+        }
+
+        function showChart(symbol) {
+            fetch(`https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${symbol}&apikey=${apiKey}`)
+                .then(response => response.json())
+                .then(data => {
+                    const timeSeries = data['Time Series (Daily)'];
+                    const labels = Object.keys(timeSeries).reverse();
+                    const prices = labels.map(date => timeSeries[date]['4. close']);
+                    if (stockChart) {
+                        stockChart.destroy();
+                    }
+                    stockChart = new Chart(chartCanvas, {
+                        type: 'line',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: `${symbol} Stock Price`,
+                                data: prices,
+                                borderColor: 'rgba(75, 192, 192, 1)',
+                                fill: false
+                            }]
+                        },
+                        options: {
+                            scales: {
+                                x: {
+                                    display: true,
+                                    title: {
+                                        display: true,
+                                        text: 'Date'
+                                    }
+                                },
+                                y: {
+                                    display: true,
+                                    title: {
+                                        display: true,
+                                        text: 'Price'
+                                    }
+                                }
+                            }
+                        }
+                    });
+                });
+        }
+    </script>
+</body>
+</html>
