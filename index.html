@@ -57,6 +57,16 @@
         #chart {
             margin-top: 20px;
         }
+        .time-range {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .time-range button {
+            padding: 10px;
+            font-size: 14px;
+            cursor: pointer;
+            margin: 0 5px;
+        }
     </style>
 </head>
 <body>
@@ -68,6 +78,13 @@
         </div>
         <div class="dashboard" id="dashboard"></div>
         <div id="chart">
+            <div class="time-range">
+                <button onclick="changeTimeRange('5min')">5min</button>
+                <button onclick="changeTimeRange('5d')">5days</button>
+                <button onclick="changeTimeRange('1m')">1month</button>
+                <button onclick="changeTimeRange('YTD')">YTD</button>
+                <button onclick="changeTimeRange('1y')">1year</button>
+            </div>
             <canvas id="stockChart"></canvas>
         </div>
     </div>
@@ -82,12 +99,14 @@
         const dashboard = document.getElementById('dashboard');
         const chartCanvas = document.getElementById('stockChart').getContext('2d');
         let stockChart;
+        let currentSymbol = '';
+        let currentTimeRange = '5min';
 
         function addSymbol() {
             const symbol = document.getElementById('symbolInput').value.toUpperCase();
             if (symbol) {
                 saveSymbol(symbol);
-                fetchStockData(symbol);
+                fetchStockData(symbol, true);
                 document.getElementById('symbolInput').value = '';
             }
         }
@@ -119,47 +138,99 @@
         function loadSymbols() {
             const symbols = getSymbols();
             symbols.forEach(symbol => {
-                fetchStockData(symbol);
+                fetchStockData(symbol, false);
             });
         }
 
-        function fetchStockData(symbol) {
+        function fetchStockData(symbol, display) {
             fetch(`https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${symbol}&apikey=${apiKey}`)
                 .then(response => response.json())
                 .then(data => {
                     if (data['Time Series (Daily)']) {
-                        displaySymbol(symbol);
+                        if (display) {
+                            displaySymbol(symbol, data);
+                        }
                     } else {
                         alert('Invalid Symbol');
                     }
                 });
         }
 
-        function displaySymbol(symbol) {
+        function displaySymbol(symbol, data) {
+            const latestDate = Object.keys(data['Time Series (Daily)'])[0];
+            const latestPrice = data['Time Series (Daily)'][latestDate]['4. close'];
             const div = document.createElement('div');
             div.className = 'symbol';
-            div.innerText = symbol;
+            div.innerHTML = `<span>${symbol}</span><span>${latestPrice}</span>`;
             div.onclick = () => showChart(symbol);
             dashboard.appendChild(div);
         }
 
         function showChart(symbol) {
-            fetch(`https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${symbol}&apikey=${apiKey}`)
+            currentSymbol = symbol;
+            updateChart();
+        }
+
+        function changeTimeRange(range) {
+            currentTimeRange = range;
+            if (currentSymbol) {
+                updateChart();
+            }
+        }
+
+        function updateChart() {
+            let functionType = 'TIME_SERIES_DAILY';
+            let interval = '';
+
+            if (currentTimeRange === '5min') {
+                functionType = 'TIME_SERIES_INTRADAY';
+                interval = '&interval=5min';
+            }
+
+            fetch(`https://www.alphavantage.co/query?function=${functionType}&symbol=${currentSymbol}${interval}&apikey=${apiKey}`)
                 .then(response => response.json())
                 .then(data => {
-                    const timeSeries = data['Time Series (Daily)'];
-                    const labels = Object.keys(timeSeries).reverse();
+                    const timeSeries = currentTimeRange === '5min' ? data['Time Series (5min)'] : data['Time Series (Daily)'];
+                    const labels = Object.keys(timeSeries);
                     const prices = labels.map(date => timeSeries[date]['4. close']);
+
+                    let filteredLabels, filteredPrices;
+                    const today = new Date();
+                    switch (currentTimeRange) {
+                        case '5min':
+                            filteredLabels = labels.slice(0, 12).reverse(); // 1 hour of data (12 intervals of 5 min)
+                            filteredPrices = prices.slice(0, 12).reverse();
+                            break;
+                        case '5d':
+                            filteredLabels = labels.slice(0, 5).reverse();
+                            filteredPrices = prices.slice(0, 5).reverse();
+                            break;
+                        case '1m':
+                            filteredLabels = labels.slice(0, 21).reverse();
+                            filteredPrices = prices.slice(0, 21).reverse();
+                            break;
+                        case 'YTD':
+                            const startOfYear = new Date(today.getFullYear(), 0, 1);
+                            filteredLabels = labels.filter(label => new Date(label) >= startOfYear).reverse();
+                            filteredPrices = filteredLabels.map(label => timeSeries[label]['4. close']).reverse();
+                            break;
+                        case '1y':
+                            const oneYearAgo = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
+                            filteredLabels = labels.filter(label => new Date(label) >= oneYearAgo).reverse();
+                            filteredPrices = filteredLabels.map(label => timeSeries[label]['4. close']).reverse();
+                            break;
+                    }
+
                     if (stockChart) {
                         stockChart.destroy();
                     }
                     stockChart = new Chart(chartCanvas, {
                         type: 'line',
                         data: {
-                            labels: labels,
+                            labels: filteredLabels,
                             datasets: [{
-                                label: `${symbol} Stock Price`,
-                                data: prices,
+                                label: `${currentSymbol} Stock Price`,
+                                data: filteredPrices,
                                 borderColor: 'rgba(75, 192, 192, 1)',
                                 fill: false
                             }]
@@ -170,9 +241,9 @@
                                     display: true,
                                     title: {
                                         display: true,
-                                        text: 'Date'
+                                        text: 'Date/Time'
                                     }
-                                },
+                                },e
                                 y: {
                                     display: true,
                                     title: {
