@@ -3,259 +3,255 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MagicManx - Stock Tracker</title>
+    <title>MagicInvestx</title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            background-color: #f0f0f0;
             margin: 0;
             padding: 0;
         }
         .container {
-            width: 80%;
-            margin: 20px auto;
-            background: #fff;
             padding: 20px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
         }
-        h1 {
-            text-align: center;
-            color: #333;
-        }
-        .form-group {
+        .header {
             display: flex;
-            justify-content: center;
-            margin-bottom: 20px;
+            justify-content: space-between;
+            align-items: center;
+            background-color: #282c34;
+            color: white;
+            padding: 10px 20px;
         }
-        .form-group input {
-            padding: 10px;
-            font-size: 16px;
-            margin-right: 10px;
-            width: 300px;
-        }
-        .form-group button {
-            padding: 10px;
-            font-size: 16px;
-            cursor: pointer;
+        .header h1 {
+            margin: 0;
         }
         .dashboard {
             margin-top: 20px;
         }
-        .symbol {
+        .symbol-input {
+            display: flex;
+            justify-content: space-between;
+        }
+        .symbol-input input {
+            width: 80%;
+            padding: 10px;
+            font-size: 16px;
+        }
+        .symbol-input button {
+            padding: 10px;
+            font-size: 16px;
+        }
+        .symbols-list {
+            margin-top: 20px;
+        }
+        .symbols-list ul {
+            list-style-type: none;
+            padding: 0;
+        }
+        .symbols-list li {
+            padding: 10px;
+            background-color: #f2f2f2;
+            margin-bottom: 10px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px;
-            background: #f9f9f9;
-            border: 1px solid #ddd;
-            margin-bottom: 10px;
-            cursor: pointer;
         }
-        .symbol:hover {
-            background: #efefef;
+        .symbols-list li button {
+            padding: 5px 10px;
         }
-        #chart {
+        .chart-container {
             margin-top: 20px;
         }
-        .time-range {
-            text-align: center;
-            margin-bottom: 20px;
+        .chart-container canvas {
+            width: 100%;
+            height: 400px;
         }
-        .time-range button {
+        .back-button {
+            display: none;
+            margin-top: 20px;
+        }
+        .back-button button {
             padding: 10px;
-            font-size: 14px;
-            cursor: pointer;
-            margin: 0 5px;
+            font-size: 16px;
+        }
+        .earnings-table {
+            display: none;
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .earnings-table th, .earnings-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+        }
+        .earnings-table th {
+            background-color: #f2f2f2;
         }
     </style>
 </head>
 <body>
+    <div class="header">
+        <h1>MagicInvestx</h1>
+        <button id="toggle-mode">Switch to Earnings Mode</button>
+    </div>
     <div class="container">
-        <h1>MagicManx - Stock Tracker</h1>
-        <div class="form-group">
-            <input type="text" id="symbolInput" placeholder="Enter Stock Symbol">
-            <button onclick="addSymbol()">Track Symbol</button>
+        <div class="symbol-input">
+            <input type="text" id="symbol-input" placeholder="Enter Stock Symbol">
+            <button onclick="addSymbol()">Add Symbol</button>
         </div>
-        <div class="dashboard" id="dashboard"></div>
-        <div id="chart">
-            <div class="time-range">
-                <button onclick="changeTimeRange('5min')">5min</button>
-                <button onclick="changeTimeRange('5d')">5days</button>
-                <button onclick="changeTimeRange('1m')">1month</button>
-                <button onclick="changeTimeRange('YTD')">YTD</button>
-                <button onclick="changeTimeRange('1y')">1year</button>
-            </div>
-            <canvas id="stockChart"></canvas>
+        <div class="symbols-list">
+            <ul id="symbols-list"></ul>
         </div>
+        <div class="chart-container">
+            <canvas id="symbol-chart"></canvas>
+        </div>
+        <div class="back-button">
+            <button onclick="goBack()">Back</button>
+        </div>
+        <table class="earnings-table" id="earnings-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Earnings</th>
+                    <th>Revenue</th>
+                </tr>
+            </thead>
+            <tbody id="earnings-tbody">
+            </tbody>
+        </table>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
-        document.addEventListener("DOMContentLoaded", function() {
-            loadSymbols();
-        });
+        let savedSymbols = JSON.parse(localStorage.getItem('savedSymbols')) || [];
+        let earningsMode = false;
 
-        const apiKey = '3U0UB0BN2C2OMO6Y';
-        const dashboard = document.getElementById('dashboard');
-        const chartCanvas = document.getElementById('stockChart').getContext('2d');
-        let stockChart;
-        let currentSymbol = '';
-        let currentTimeRange = '5min';
+        document.getElementById('toggle-mode').addEventListener('click', toggleMode);
 
         function addSymbol() {
-            const symbol = document.getElementById('symbolInput').value.toUpperCase();
-            if (symbol) {
-                saveSymbol(symbol);
-                fetchStockData(symbol, true);
-                document.getElementById('symbolInput').value = '';
+            const symbol = document.getElementById('symbol-input').value.toUpperCase();
+            if (symbol && !savedSymbols.includes(symbol)) {
+                savedSymbols.push(symbol);
+                localStorage.setItem('savedSymbols', JSON.stringify(savedSymbols));
+                displaySymbols();
             }
         }
 
-        function saveSymbol(symbol) {
-            let symbols = getSymbols();
-            if (!symbols.includes(symbol)) {
-                symbols.push(symbol);
-                document.cookie = `symbols=${JSON.stringify(symbols)}; path=/`;
-            }
-        }
-
-        function getSymbols() {
-            const name = 'symbols=';
-            const decodedCookie = decodeURIComponent(document.cookie);
-            const ca = decodedCookie.split(';');
-            for(let i = 0; i < ca.length; i++) {
-                let c = ca[i];
-                while (c.charAt(0) === ' ') {
-                    c = c.substring(1);
-                }
-                if (c.indexOf(name) === 0) {
-                    return JSON.parse(c.substring(name.length, c.length));
-                }
-            }
-            return [];
-        }
-
-        function loadSymbols() {
-            const symbols = getSymbols();
-            symbols.forEach(symbol => {
-                fetchStockData(symbol, false);
+        function displaySymbols() {
+            const symbolsList = document.getElementById('symbols-list');
+            symbolsList.innerHTML = '';
+            savedSymbols.forEach(symbol => {
+                const li = document.createElement('li');
+                li.innerHTML = `
+                    <span>${symbol}</span>
+                    <button onclick="showSymbolData('${symbol}')">View</button>
+                `;
+                symbolsList.appendChild(li);
             });
         }
 
-        function fetchStockData(symbol, display) {
-            fetch(`https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${symbol}&apikey=${apiKey}`)
+        function showSymbolData(symbol) {
+            if (!earningsMode) {
+                fetchStockData(symbol);
+            } else {
+                fetchEarningsData(symbol);
+            }
+        }
+
+        function fetchStockData(symbol) {
+            const apiKey = '7ST1EVEAP6WKTLNP';
+            const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${symbol}&apikey=${apiKey}`;
+            fetch(url)
                 .then(response => response.json())
                 .then(data => {
-                    if (data['Time Series (Daily)']) {
-                        if (display) {
-                            displaySymbol(symbol, data);
-                        }
-                    } else {
-                        alert('Invalid Symbol');
-                    }
+                    const timeSeries = data['Time Series (Daily)'];
+                    const labels = Object.keys(timeSeries).reverse();
+                    const prices = labels.map(date => parseFloat(timeSeries[date]['4. close']));
+                    const volumes = labels.map(date => parseFloat(timeSeries[date]['5. volume']));
+                    displayChart(symbol, labels, prices, volumes);
                 });
         }
 
-        function displaySymbol(symbol, data) {
-            const latestDate = Object.keys(data['Time Series (Daily)'])[0];
-            const latestPrice = data['Time Series (Daily)'][latestDate]['4. close'];
-            const div = document.createElement('div');
-            div.className = 'symbol';
-            div.innerHTML = `<span>${symbol}</span><span>${latestPrice}</span>`;
-            div.onclick = () => showChart(symbol);
-            dashboard.appendChild(div);
-        }
-
-        function showChart(symbol) {
-            currentSymbol = symbol;
-            updateChart();
-        }
-
-        function changeTimeRange(range) {
-            currentTimeRange = range;
-            if (currentSymbol) {
-                updateChart();
-            }
-        }
-
-        function updateChart() {
-            let functionType = 'TIME_SERIES_DAILY';
-            let interval = '';
-
-            if (currentTimeRange === '5min') {
-                functionType = 'TIME_SERIES_INTRADAY';
-                interval = '&interval=5min';
-            }
-
-            fetch(`https://www.alphavantage.co/query?function=${functionType}&symbol=${currentSymbol}${interval}&apikey=${apiKey}`)
+        function fetchEarningsData(symbol) {
+            const apiKey = '7ST1EVEAP6WKTLNP';
+            const url = `https://www.alphavantage.co/query?function=EARNINGS&symbol=${symbol}&apikey=${apiKey}`;
+            fetch(url)
                 .then(response => response.json())
                 .then(data => {
-                    const timeSeries = currentTimeRange === '5min' ? data['Time Series (5min)'] : data['Time Series (Daily)'];
-                    const labels = Object.keys(timeSeries);
-                    const prices = labels.map(date => timeSeries[date]['4. close']);
+                    displayEarningsTable(symbol, data.annualEarnings);
+                });
+        }
 
-                    let filteredLabels, filteredPrices;
-                    const today = new Date();
-                    switch (currentTimeRange) {
-                        case '5min':
-                            filteredLabels = labels.slice(0, 12).reverse(); // 1 hour of data (12 intervals of 5 min)
-                            filteredPrices = prices.slice(0, 12).reverse();
-                            break;
-                        case '5d':
-                            filteredLabels = labels.slice(0, 5).reverse();
-                            filteredPrices = prices.slice(0, 5).reverse();
-                            break;
-                        case '1m':
-                            filteredLabels = labels.slice(0, 21).reverse();
-                            filteredPrices = prices.slice(0, 21).reverse();
-                            break;
-                        case 'YTD':
-                            const startOfYear = new Date(today.getFullYear(), 0, 1);
-                            filteredLabels = labels.filter(label => new Date(label) >= startOfYear).reverse();
-                            filteredPrices = filteredLabels.map(label => timeSeries[label]['4. close']).reverse();
-                            break;
-                        case '1y':
-                            const oneYearAgo = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
-                            filteredLabels = labels.filter(label => new Date(label) >= oneYearAgo).reverse();
-                            filteredPrices = filteredLabels.map(label => timeSeries[label]['4. close']).reverse();
-                            break;
-                    }
-
-                    if (stockChart) {
-                        stockChart.destroy();
-                    }
-                    stockChart = new Chart(chartCanvas, {
-                        type: 'line',
-                        data: {
-                            labels: filteredLabels,
-                            datasets: [{
-                                label: `${currentSymbol} Stock Price`,
-                                data: filteredPrices,
-                                borderColor: 'rgba(75, 192, 192, 1)',
-                                fill: false
-                            }]
+        function displayChart(symbol, labels, prices, volumes) {
+            document.querySelector('.chart-container').style.display = 'block';
+            document.querySelector('.back-button').style.display = 'block';
+            document.getElementById('earnings-table').style.display = 'none';
+            const ctx = document.getElementById('symbol-chart').getContext('2d');
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: `${symbol} Price`,
+                        data: prices,
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        borderWidth: 1,
+                        fill: false,
+                        yAxisID: 'y-axis-price'
+                    }, {
+                        label: `${symbol} Volume`,
+                        data: volumes,
+                        borderColor: 'rgba(153, 102, 255, 1)',
+                        borderWidth: 1,
+                        fill: false,
+                        yAxisID: 'y-axis-volume'
+                    }]
+                },
+                options: {
+                    scales: {
+                        'y-axis-price': {
+                            type: 'linear',
+                            position: 'left',
+                            beginAtZero: true
                         },
-                        options: {
-                            scales: {
-                                x: {
-                                    display: true,
-                                    title: {
-                                        display: true,
-                                        text: 'Date/Time'
-                                    }
-                                },e
-                                y: {
-                                    display: true,
-                                    title: {
-                                        display: true,
-                                        text: 'Price'
-                                    }
-                                }
-                            }
+                        'y-axis-volume': {
+                            type: 'linear',
+                            position: 'right',
+                            beginAtZero: true
                         }
-                    });
-                });
+                    }
+                }
+            });
         }
+
+        function displayEarningsTable(symbol, earnings) {
+            document.querySelector('.chart-container').style.display = 'none';
+            document.querySelector('.back-button').style.display = 'block';
+            document.getElementById('earnings-table').style.display = 'table';
+            const tbody = document.getElementById('earnings-tbody');
+            tbody.innerHTML = '';
+            earnings.forEach(earning => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${earning.fiscalDateEnding}</td>
+                    <td>${earning.reportedEPS}</td>
+                    <td>${earning.totalRevenue}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        function goBack() {
+            document.querySelector('.chart-container').style.display = 'none';
+            document.querySelector('.back-button').style.display = 'none';
+            document.getElementById('earnings-table').style.display = 'none';
+        }
+
+        function toggleMode() {
+            earningsMode = !earningsMode;
+            document.getElementById('toggle-mode').textContent = earningsMode ? 'Switch to Stock Mode' : 'Switch to Earnings Mode';
+        }
+
+        displaySymbols();
     </script>
 </body>
 </html>
