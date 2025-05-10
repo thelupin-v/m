@@ -1,21 +1,4 @@
 #!/usr/bin/env python3
-"""
-MTProto-inspired End-to-End Encryption Protocol Library
-
-This module implements a custom end-to-end encryption protocol inspired by MTProto,
-with advanced security features:
-- Diffie-Hellman key exchange with RSA authentication
-- Permanent and temporary authorization keys
-- Key binding mechanism
-- Custom AES implementation
-- Key rotation
-- Traffic analysis prevention
-- Replay attack prevention
-
-All cryptographic primitives are implemented from scratch without using external 
-cryptographic libraries or socket code.
-"""
-
 import os
 import time
 import hashlib
