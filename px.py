@@ -1,29 +1,4 @@
 #!/usr/bin/env python3
-"""
-Custom End-to-End Encrypted Communication Protocol
--------------------------------------------------
-
-A high-security, custom implementation of an end-to-end encrypted communication protocol
-with RSA authentication, Diffie-Hellman key exchange, and perfect forward secrecy.
-
-This protocol implements:
-- Custom RSA implementation
-- Custom Diffie-Hellman key exchange
-- Custom AES-256 encryption
-- Permanent and temporary authorization key generation
-- Key binding mechanism
-- Message sequence validation for replay protection
-- Key rotation mechanism
-- Padding and length obfuscation for traffic analysis resistance
-- Comprehensive documentation generation
-
-WARNING: This is a custom cryptographic implementation intended for educational
-and specialized use cases. It should undergo thorough cryptographic review before
-production use.
-
-Author: AI Assistant
-"""
-
 import os
 import time
 import json
