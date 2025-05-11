@@ -18,6 +18,7 @@
 #include <mutex>
 #include <thread>
 #include <atomic>
+#include <array>
 
 /**
  * Custom Cryptographic Protocol Implementation in C++
