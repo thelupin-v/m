@@ -1,2731 +1,2264 @@
-#include <QApplication>
-#include <QMainWindow>
-#include <QWidget>
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QPushButton>
-#include <QLabel>
-#include <QLineEdit>
-#include <QTextEdit>
-#include <QListWidget>
-#include <QSplitter>
-#include <QMessageBox>
-#include <QDialog>
-#include <QInputDialog>
-#include <QDateTime>
-#include <QTimer>
-#include <QScrollArea>
-#include <QScrollBar>
-#include <QToolBar>
-#include <QAction>
-#include <QIcon>
-#include <QMenu>
-#include <QMenuBar>
-#include <QStatusBar>
-#include <QFrame>
-#include <QFile>
-#include <QDir>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonArray>
-#include <QNetworkAccessManager>
-#include <QNetworkRequest>
-#include <QNetworkReply>
-#include <QSqlDatabase>
-#include <QSqlQuery>
-#include <QSqlError>
-#include <QHeaderView>
-#include <QTableView>
-#include <QStandardItemModel>
-#include <QSvgWidget>
-#include <QBuffer>
-#include <QPainter>
-#include <QThread>
-#include <QSettings>
-#include <QStackedWidget>
-#include <QRadioButton>
-#include <QtConcurrent>
-#include <QFuture>
-
-#include <iostream>
-#include <string>
-#include <vector>
-#include <map>
-#include <set>
-#include <cstring>
-#include <cstdlib>
-#include <ctime>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <thread>
-#include <mutex>
-#include <condition_variable>
-#include <queue>
-#include <algorithm>
-#include <functional>
-#include <random>
-#include <chrono>
-#include <sstream>
-#include <iomanip>
-#include <memory>
-
-// Diffie-Hellman 2048-bit prime from RFC 3526
-const std::string DH_PRIME = 
-    "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74"
-    "020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245"
-    "E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1FE6"
-    "49286651ECE45B3DC2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F83655D23DCA3AD96"
-    "1C62F356208552BB9ED529077096966D670C354E4ABC9804F1746C08CA18217C32905E462E36CE3B"
-    "E39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9DE2BCBF6955817183995497CEA956AE5"
-    "15D2261898FA051015728E5A8AACAA68FFFFFFFFFFFFFFFF";
-
-// Custom SHA-1 implementation
-class SHA1 {
-private:
-    uint32_t state[5];
-    uint32_t count[2];
-    unsigned char buffer[64];
-
-    void transform(const unsigned char block[64]) {
-        uint32_t a = state[0], b = state[1], c = state[2], d = state[3], e = state[4];
-        uint32_t w[80];
-
-        for (int i = 0; i < 16; i++) {
-            w[i] = (block[i * 4] << 24) | (block[i * 4 + 1] << 16) | (block[i * 4 + 2] << 8) | block[i * 4 + 3];
-        }
-
-        for (int i = 16; i < 80; i++) {
-            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]);
-            w[i] = (w[i] << 1) | (w[i] >> 31);
-        }
-
-        for (int i = 0; i < 80; i++) {
-            uint32_t f, k;
-
-            if (i < 20) {
-                f = (b & c) | ((~b) & d);
-                k = 0x5A827999;
-            } else if (i < 40) {
-                f = b ^ c ^ d;
-                k = 0x6ED9EBA1;
-            } else if (i < 60) {
-                f = (b & c) | (b & d) | (c & d);
-                k = 0x8F1BBCDC;
-            } else {
-                f = b ^ c ^ d;
-                k = 0xCA62C1D6;
-            }
-
-            uint32_t temp = ((a << 5) | (a >> 27)) + f + e + k + w[i];
-            e = d;
-            d = c;
-            c = (b << 30) | (b >> 2);
-            b = a;
-            a = temp;
-        }
-
-        state[0] += a;
-        state[1] += b;
-        state[2] += c;
-        state[3] += d;
-        state[4] += e;
-    }
-
-public:
-    SHA1() {
-        reset();
-    }
-
-    void reset() {
-        state[0] = 0x67452301;
-        state[1] = 0xEFCDAB89;
-        state[2] = 0x98BADCFE;
-        state[3] = 0x10325476;
-        state[4] = 0xC3D2E1F0;
-        count[0] = count[1] = 0;
-    }
-
-    void update(const void* data, size_t len) {
-        const unsigned char* input = static_cast<const unsigned char*>(data);
-        size_t i, index, partLen;
-
-        index = (count[0] >> 3) & 0x3F;
-        if ((count[0] += (len << 3)) < (len << 3)) count[1]++;
-        count[1] += (len >> 29);
-
-        partLen = 64 - index;
-        if (len >= partLen) {
-            memcpy(&buffer[index], input, partLen);
-            transform(buffer);
-
-            for (i = partLen; i + 63 < len; i += 64) {
-                transform(&input[i]);
-            }
-            index = 0;
-        } else {
-            i = 0;
-        }
-
-        memcpy(&buffer[index], &input[i], len - i);
-    }
-
-    void final(unsigned char digest[20]) {
-        unsigned char finalcount[8];
-        for (unsigned i = 0; i < 8; i++) {
-            finalcount[i] = static_cast<unsigned char>((count[(i >= 4 ? 0 : 1)] >> ((3 - (i & 3)) * 8)) & 255);
-        }
-
-        unsigned char c = 0x80;
-        update(&c, 1);
-
-        while ((count[0] & 504) != 448) {
-            c = 0;
-            update(&c, 1);
-        }
-
-        update(finalcount, 8);
-
-        for (unsigned i = 0; i < 20; i++) {
-            digest[i] = static_cast<unsigned char>((state[i >> 2] >> ((3 - (i & 3)) * 8)) & 255);
-        }
-    }
-
-    static std::string hash(const std::string& input) {
-        SHA1 sha1;
-        unsigned char digest[20];
-        
-        sha1.update(input.c_str(), input.size());
-        sha1.final(digest);
-        
-        std::stringstream ss;
-        for(int i = 0; i < 20; i++) {
-            ss << std::hex << std::setw(2) << std::setfill('0') << (int)digest[i];
-        }
-        
-        return ss.str();
-    }
-};
-
-// Custom SHA-256 implementation
-class SHA256 {
-private:
-    uint32_t state[8];
-    uint32_t count[2];
-    unsigned char buffer[64];
-    
-    const uint32_t K[64] = {
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
-    };
-    
-    static uint32_t ROTR(uint32_t x, uint32_t n) {
-        return (x >> n) | (x << (32 - n));
-    }
-    
-    static uint32_t Ch(uint32_t x, uint32_t y, uint32_t z) {
-        return (x & y) ^ (~x & z);
-    }
-    
-    static uint32_t Maj(uint32_t x, uint32_t y, uint32_t z) {
-        return (x & y) ^ (x & z) ^ (y & z);
-    }
-    
-    static uint32_t Sigma0(uint32_t x) {
-        return ROTR(x, 2) ^ ROTR(x, 13) ^ ROTR(x, 22);
-    }
-    
-    static uint32_t Sigma1(uint32_t x) {
-        return ROTR(x, 6) ^ ROTR(x, 11) ^ ROTR(x, 25);
-    }
-    
-    static uint32_t sigma0(uint32_t x) {
-        return ROTR(x, 7) ^ ROTR(x, 18) ^ (x >> 3);
-    }
-    
-    static uint32_t sigma1(uint32_t x) {
-        return ROTR(x, 17) ^ ROTR(x, 19) ^ (x >> 10);
-    }
-    
-    void transform(const unsigned char block[64]) {
-        uint32_t a = state[0], b = state[1], c = state[2], d = state[3];
-        uint32_t e = state[4], f = state[5], g = state[6], h = state[7];
-        uint32_t w[64];
-        
-        for (int i = 0; i < 16; i++) {
-            w[i] = (block[i * 4] << 24) | (block[i * 4 + 1] << 16) | (block[i * 4 + 2] << 8) | block[i * 4 + 3];
-        }
-        
-        for (int i = 16; i < 64; i++) {
-            w[i] = sigma1(w[i - 2]) + w[i - 7] + sigma0(w[i - 15]) + w[i - 16];
-        }
-        
-        for (int i = 0; i < 64; i++) {
-            uint32_t t1 = h + Sigma1(e) + Ch(e, f, g) + K[i] + w[i];
-            uint32_t t2 = Sigma0(a) + Maj(a, b, c);
-            
-            h = g;
-            g = f;
-            f = e;
-            e = d + t1;
-            d = c;
-            c = b;
-            b = a;
-            a = t1 + t2;
-        }
-        
-        state[0] += a;
-        state[1] += b;
-        state[2] += c;
-        state[3] += d;
-        state[4] += e;
-        state[5] += f;
-        state[6] += g;
-        state[7] += h;
-    }
-    
-public:
-    SHA256() {
-        reset();
-    }
-    
-    void reset() {
-        state[0] = 0x6a09e667;
-        state[1] = 0xbb67ae85;
-        state[2] = 0x3c6ef372;
-        state[3] = 0xa54ff53a;
-        state[4] = 0x510e527f;
-        state[5] = 0x9b05688c;
-        state[6] = 0x1f83d9ab;
-        state[7] = 0x5be0cd19;
-        count[0] = count[1] = 0;
-    }
-    
-    void update(const void* data, size_t len) {
-        const unsigned char* input = static_cast<const unsigned char*>(data);
-        size_t i, index, partLen;
-        
-        index = (count[0] >> 3) & 0x3F;
-        if ((count[0] += (len << 3)) < (len << 3)) count[1]++;
-        count[1] += (len >> 29);
-        
-        partLen = 64 - index;
-        if (len >= partLen) {
-            memcpy(&buffer[index], input, partLen);
-            transform(buffer);
-            
-            for (i = partLen; i + 63 < len; i += 64) {
-                transform(&input[i]);
-            }
-            index = 0;
-        } else {
-            i = 0;
-        }
-        
-        memcpy(&buffer[index], &input[i], len - i);
-    }
-    
-    void final(unsigned char digest[32]) {
-        unsigned char finalcount[8];
-        for (unsigned i = 0; i < 8; i++) {
-            finalcount[i] = static_cast<unsigned char>((count[(i >= 4 ? 0 : 1)] >> ((3 - (i & 3)) * 8)) & 255);
-        }
-        
-        unsigned char c = 0x80;
-        update(&c, 1);
-        
-        while ((count[0] & 504) != 448) {
-            c = 0;
-            update(&c, 1);
-        }
-        
-        update(finalcount, 8);
-        
-        for (unsigned i = 0; i < 32; i++) {
-            digest[i] = static_cast<unsigned char>((state[i >> 2] >> ((3 - (i & 3)) * 8)) & 255);
-        }
-    }
-    
-    static std::string hash(const std::string& input) {
-        SHA256 sha256;
-        unsigned char digest[32];
-        
-        sha256.update(input.c_str(), input.size());
-        sha256.final(digest);
-        
-        std::stringstream ss;
-        for(int i = 0; i < 32; i++) {
-            ss << std::hex << std::setw(2) << std::setfill('0') << (int)digest[i];
-        }
-        
-        return ss.str();
-    }
-};
-
-// BigInteger class for handling large integers required for DHKE
-class BigInteger {
-private:
-    std::vector<uint8_t> data; // big endian representation
-
-    void removeLeadingZeros() {
-        while (data.size() > 1 && data.front() == 0) {
-            data.erase(data.begin());
-        }
-    }
-
-public:
-    BigInteger() : data(1, 0) {}
-
-    BigInteger(const std::string& hexStr) {
-        if (hexStr.empty()) {
-            data.push_back(0);
-            return;
-        }
-
-        for (size_t i = 0; i < hexStr.size(); i += 2) {
-            std::string byteStr = hexStr.substr(i, 2);
-            uint8_t byte = static_cast<uint8_t>(std::stoi(byteStr, nullptr, 16));
-            data.push_back(byte);
-        }
-
-        removeLeadingZeros();
-    }
-
-    BigInteger(uint64_t value) {
-        do {
-            data.insert(data.begin(), value & 0xFF);
-            value >>= 8;
-        } while (value);
-    }
-
-    static BigInteger fromBinary(const std::vector<uint8_t>& binary) {
-        BigInteger result;
-        result.data = binary;
-        result.removeLeadingZeros();
-        return result;
-    }
-
-    std::vector<uint8_t> toBinary() const {
-        return data;
-    }
-
-    std::string toHexString() const {
-        std::stringstream ss;
-        for (uint8_t byte : data) {
-            ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
-        }
-        return ss.str();
-    }
-    
-    // Generate a random BigInteger of specified bit length
-    static BigInteger generateRandom(int bits) {
-        if (bits <= 0) {
-            throw std::invalid_argument("Bit length must be positive");
-        }
-        
-        // Calculate number of bytes needed
-        int bytes = (bits + 7) / 8;
-        
-        // Initialize random generator
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::uniform_int_distribution<uint8_t> dis(0, 255);
-        
-        // Generate random bytes
-        std::vector<uint8_t> randomBytes(bytes);
-        for (int i = 0; i < bytes; i++) {
-            randomBytes[i] = dis(gen);
-        }
-        
-        // Ensure the highest bit is set to meet the bit length requirement
-        int highestBit = bits % 8;
-        if (highestBit == 0) {
-            // If bits is a multiple of 8, set the highest bit of the most significant byte
-            randomBytes[0] |= 0x80;
-        } else {
-            // Otherwise, set the appropriate bit
-            randomBytes[0] |= (1 << (highestBit - 1));
-        }
-        
-        BigInteger result;
-        result.data = randomBytes;
-        return result;
-    }
-
-    BigInteger modPow(const BigInteger& exponent, const BigInteger& modulus) const {
-        if (modulus.isZero()) {
-            throw std::runtime_error("Modulus cannot be zero");
-        }
-        
-        if (modulus.isOne()) {
-            return BigInteger(0);
-        }
-
-        BigInteger base = *this % modulus;
-        BigInteger result(1);
-        BigInteger exp = exponent;
-
-        while (!exp.isZero()) {
-            if (exp.isOdd()) {
-                result = (result * base) % modulus;
-            }
-            base = (base * base) % modulus;
-            exp = exp >> 1;
-        }
-
-        return result;
-    }
-
-    bool isZero() const {
-        return data.size() == 1 && data[0] == 0;
-    }
-
-    bool isOne() const {
-        return data.size() == 1 && data[0] == 1;
-    }
-
-    bool isOdd() const {
-        return (data.back() & 1) == 1;
-    }
-
-    BigInteger operator+(const BigInteger& other) const {
-        std::vector<uint8_t> result;
-        int carry = 0;
-        
-        const std::vector<uint8_t>& a = data;
-        const std::vector<uint8_t>& b = other.data;
-        
-        size_t maxSize = std::max(a.size(), b.size());
-        result.resize(maxSize + 1, 0);
-        
-        for (ssize_t i = a.size() - 1, j = b.size() - 1, k = result.size() - 1; k >= 0; --i, --j, --k) {
-            int sum = carry;
-            if (i >= 0) sum += a[i];
-            if (j >= 0) sum += b[j];
-            
-            result[k] = sum & 0xFF;
-            carry = sum >> 8;
-        }
-        
-        BigInteger res;
-        res.data = result;
-        res.removeLeadingZeros();
-        return res;
-    }
-
-    BigInteger operator-(const BigInteger& other) const {
-        if (*this < other) {
-            throw std::runtime_error("Negative result not supported");
-        }
-        
-        std::vector<uint8_t> result;
-        int borrow = 0;
-        
-        const std::vector<uint8_t>& a = data;
-        const std::vector<uint8_t>& b = other.data;
-        
-        result.resize(a.size(), 0);
-        
-        for (ssize_t i = a.size() - 1, j = b.size() - 1, k = result.size() - 1; k >= 0; --i, --j, --k) {
-            int diff = a[i] - borrow;
-            if (j >= 0) diff -= b[j];
-            
-            if (diff < 0) {
-                diff += 256;
-                borrow = 1;
-            } else {
-                borrow = 0;
-            }
-            
-            result[k] = diff;
-        }
-        
-        BigInteger res;
-        res.data = result;
-        res.removeLeadingZeros();
-        return res;
-    }
-
-    BigInteger operator*(const BigInteger& other) const {
-        if (isZero() || other.isZero()) {
-            return BigInteger(0);
-        }
-        
-        const std::vector<uint8_t>& a = data;
-        const std::vector<uint8_t>& b = other.data;
-        
-        std::vector<uint8_t> result(a.size() + b.size(), 0);
-        
-        for (ssize_t i = a.size() - 1; i >= 0; --i) {
-            int carry = 0;
-            for (ssize_t j = b.size() - 1; j >= 0; --j) {
-                int temp = result[i + j + 1] + a[i] * b[j] + carry;
-                result[i + j + 1] = temp & 0xFF;
-                carry = temp >> 8;
-            }
-            result[i] += carry;
-        }
-        
-        BigInteger res;
-        res.data = result;
-        res.removeLeadingZeros();
-        return res;
-    }
-
-    BigInteger operator/(const BigInteger& other) const {
-        if (other.isZero()) {
-            throw std::runtime_error("Division by zero");
-        }
-        
-        if (*this < other) {
-            return BigInteger(0);
-        }
-        
-        if (*this == other) {
-            return BigInteger(1);
-        }
-        
-        BigInteger quotient(0);
-        BigInteger remainder = *this;
-        
-        // Compute the number of bits in the dividend and divisor
-        int dividendBits = (data.size() * 8);
-        int divisorBits = (other.data.size() * 8);
-        
-        // Align divisor with dividend
-        BigInteger divisor = other << (dividendBits - divisorBits);
-        BigInteger bitValue = BigInteger(1) << (dividendBits - divisorBits);
-        
-        while (remainder >= other) {
-            if (remainder >= divisor) {
-                remainder = remainder - divisor;
-                quotient = quotient + bitValue;
-            }
-            divisor = divisor >> 1;
-            bitValue = bitValue >> 1;
-        }
-        
-        return quotient;
-    }
-
-    BigInteger operator%(const BigInteger& other) const {
-        if (other.isZero()) {
-            throw std::runtime_error("Modulo by zero");
-        }
-        
-        if (*this < other) {
-            return *this;
-        }
-        
-        if (*this == other) {
-            return BigInteger(0);
-        }
-        
-        BigInteger remainder = *this;
-        
-        // Compute the number of bits in the dividend and divisor
-        int dividendBits = (data.size() * 8);
-        int divisorBits = (other.data.size() * 8);
-        
-        // Align divisor with dividend
-        BigInteger divisor = other << (dividendBits - divisorBits);
-        
-        while (remainder >= other) {
-            if (remainder >= divisor) {
-                remainder = remainder - divisor;
-            }
-            divisor = divisor >> 1;
-        }
-        
-        return remainder;
-    }
-
-    BigInteger operator<<(int shift) const {
-        if (shift <= 0) {
-            return *this;
-        }
-        
-        int bytesToAdd = shift / 8;
-        int bitsToShift = shift % 8;
-        
-        std::vector<uint8_t> result;
-        result.resize(data.size() + bytesToAdd + (bitsToShift > 0 ? 1 : 0), 0);
-        
-        // Copy existing data with byte-level shift
-        for (size_t i = 0; i < data.size(); ++i) {
-            result[i] = data[i];
-        }
-        
-        // Perform bit-level shift if needed
-        if (bitsToShift > 0) {
-            for (int i = result.size() - 1; i > bytesToAdd; --i) {
-                result[i] = (result[i - bytesToAdd] << bitsToShift) | 
-                           (i > bytesToAdd + 1 ? (result[i - bytesToAdd - 1] >> (8 - bitsToShift)) : 0);
-            }
-            result[bytesToAdd] = result[0] << bitsToShift;
-            
-            // Set the newly added bytes to zero
-            for (int i = 0; i < bytesToAdd; ++i) {
-                result[i] = 0;
-            }
-        } else {
-            // Just shift bytes
-            for (int i = result.size() - 1; i >= bytesToAdd; --i) {
-                result[i] = result[i - bytesToAdd];
-            }
-            // Set the newly added bytes to zero
-            for (int i = 0; i < bytesToAdd; ++i) {
-                result[i] = 0;
-            }
-        }
-        
-        BigInteger res;
-        res.data = result;
-        res.removeLeadingZeros();
-        return res;
-    }
-
-    BigInteger operator>>(int shift) const {
-        if (shift <= 0) {
-            return *this;
-        }
-        
-        int bytesToRemove = shift / 8;
-        int bitsToShift = shift % 8;
-        
-        if (bytesToRemove >= static_cast<int>(data.size())) {
-            return BigInteger(0);
-        }
-        
-        std::vector<uint8_t> result;
-        result.resize(data.size() - bytesToRemove, 0);
-        
-        // Copy existing data with byte-level shift
-        for (size_t i = 0; i < result.size(); ++i) {
-            result[i] = data[i + bytesToRemove];
-        }
-        
-        // Perform bit-level shift if needed
-        if (bitsToShift > 0) {
-            for (size_t i = 0; i < result.size() - 1; ++i) {
-                result[i] = (result[i] >> bitsToShift) | 
-                           (result[i + 1] << (8 - bitsToShift));
-            }
-            result[result.size() - 1] = result[result.size() - 1] >> bitsToShift;
-        }
-        
-        BigInteger res;
-        res.data = result;
-        res.removeLeadingZeros();
-        return res;
-    }
-
-    bool operator<(const BigInteger& other) const {
-        if (data.size() < other.data.size()) {
-            return true;
-        }
-        if (data.size() > other.data.size()) {
-            return false;
-        }
-        
-        for (size_t i = 0; i < data.size(); ++i) {
-            if (data[i] < other.data[i]) {
-                return true;
-            }
-            if (data[i] > other.data[i]) {
-                return false;
-            }
-        }
-        
-        return false; // Equal
-    }
-
-    bool operator>(const BigInteger& other) const {
-        return other < *this;
-    }
-
-    bool operator<=(const BigInteger& other) const {
-        return !(other < *this);
-    }
-
-    bool operator>=(const BigInteger& other) const {
-        return !(*this < other);
-    }
-
-    bool operator==(const BigInteger& other) const {
-        return data == other.data;
-    }
-
-    bool operator!=(const BigInteger& other) const {
-        return !(*this == other);
-    }
-
-    // We'll use the first implementation of generateRandom only
-};
-
-// Diffie-Hellman key exchange implementation
-class DiffieHellman {
-private:
-    BigInteger p; // Prime modulus
-    BigInteger g; // Generator
-    BigInteger private_key; // Private key
-    BigInteger public_key; // Public key g^a mod p
-    std::chrono::time_point<std::chrono::system_clock> creation_time;
-    int message_count;
-    static const int MESSAGE_THRESHOLD = 100; // Re-key after 100 messages
-    static const int TIME_THRESHOLD_DAYS = 7; // Re-key after 1 week
-
-public:
-    DiffieHellman(const std::string& primeHex = DH_PRIME, int generator = 2) {
-        // Initialize with the provided prime
-        p = BigInteger(primeHex);
-        g = BigInteger(generator);
-        
-        // Generate a random private key
-        private_key = BigInteger::generateRandom(256); // 256-bit private key
-        
-        // Calculate public key g^a mod p
-        public_key = g.modPow(private_key, p);
-        
-        // Initialize counters for Perfect Forward Secrecy
-        creation_time = std::chrono::system_clock::now();
-        message_count = 0;
-    }
-    
-    // Get the public key
-    BigInteger getPublicKey() const {
-        return public_key;
-    }
-    
-    // Generate a private key
-    BigInteger generatePrivateKey() {
-        return BigInteger::generateRandom(256); // 256-bit private key
-    }
-    
-    // Generate a public key from a private key
-    BigInteger generatePublicKey(const BigInteger& privateKey) {
-        return g.modPow(privateKey, p);
-    }
-    
-    // Compute the shared secret given the other party's public key
-    BigInteger computeSharedSecret(const BigInteger& otherPublicKey) const {
-        // Check that otherPublicKey is valid (greater than 1 and less than p-1)
-        BigInteger one(1);
-        BigInteger p_minus_1 = p - one;
-        
-        if (otherPublicKey <= one || otherPublicKey >= p_minus_1) {
-            throw std::runtime_error("Invalid public key value");
-        }
-        
-        // Additional security check: verify public key is in proper range
-        // Recommended: check g_a and g_b are between 2^{2048-64} and p - 2^{2048-64}
-        BigInteger min_threshold = BigInteger(1) << (2048 - 64);
-        BigInteger max_threshold = p - min_threshold;
-        
-        if (otherPublicKey < min_threshold || otherPublicKey > max_threshold) {
-            throw std::runtime_error("Public key outside secure range");
-        }
-        
-        // Shared secret = (otherPublicKey)^private_key mod p
-        BigInteger shared_secret = otherPublicKey.modPow(private_key, p);
-        
-        // Add padding if needed to ensure key is exactly 256 bytes long
-        std::vector<uint8_t> key_bytes = shared_secret.toBinary();
-        if (key_bytes.size() < 256) {
-            std::vector<uint8_t> padded_key(256, 0);
-            std::copy(key_bytes.begin(), key_bytes.end(), padded_key.end() - key_bytes.size());
-            shared_secret = BigInteger::fromBinary(padded_key);
-        }
-        
-        return shared_secret;
-    }
-    
-    // Increment message counter and check if re-keying is needed
-    bool shouldRekey() {
-        message_count++;
-        
-        // Re-key if more than 100 messages or key is older than 1 week and at least 1 message sent
-        auto now = std::chrono::system_clock::now();
-        auto days = std::chrono::duration_cast<std::chrono::hours>(now - creation_time).count() / 24;
-        
-        return (message_count > MESSAGE_THRESHOLD || 
-                (days >= TIME_THRESHOLD_DAYS && message_count > 0));
-    }
-    
-    // Generate a new key pair for re-keying (Perfect Forward Secrecy)
-    void regenerateKeys() {
-        // Generate a new random private key
-        private_key = BigInteger::generateRandom(256);
-        
-        // Calculate new public key
-        public_key = g.modPow(private_key, p);
-        
-        // Reset counters
-        creation_time = std::chrono::system_clock::now();
-        message_count = 0;
-    }
-    
-    // Key visualization for security verification (fingerprint)
-    static std::string visualizeKey(const BigInteger& key) {
-        // Extract the first 128 bits of SHA1(key) and 160 bits of SHA256(key)
-        std::string keyStr = key.toHexString();
-        std::string sha1Hash = SHA1::hash(keyStr);
-        std::string sha256Hash = SHA256::hash(keyStr);
-        
-        // Concatenate the first 128 bits (32 hex chars) of SHA1 and first 160 bits (40 hex chars) of SHA256
-        std::string fingerprint = sha1Hash.substr(0, 32) + sha256Hash.substr(0, 40);
-        
-        return fingerprint;
-    }
-    
-    // Generate a visual representation of the key for user verification
-    static std::string generateKeyVisualization(const BigInteger& key) {
-        // Use SHA-256 to create a unique fingerprint of the key
-        std::string keyStr = key.toHexString();
-        std::string fingerprint = SHA256::hash(keyStr);
-        
-        // Format the fingerprint for visualization (groups of 8 characters with dashes)
-        std::stringstream vis;
-        vis << "Key Fingerprint: " << fingerprint.substr(0, 8) << "-" 
-            << fingerprint.substr(8, 8) << "-" 
-            << fingerprint.substr(16, 8) << "-" 
-            << fingerprint.substr(24, 8);
-        
-        return vis.str();
-    }
-    
-    // Generate SVG visualization of the key
-    static QString generateKeyVisualization(const std::string& fingerprint) {
-        // Create a colorful identicon based on the fingerprint
-        QString svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"200\" height=\"200\" viewBox=\"0 0 10 10\">";
-        
-        // Use the fingerprint to generate a unique visual pattern
-        int index = 0;
-        for (int y = 0; y < 5; y++) {
-            for (int x = 0; x < 5; x++) {
-                if (index < fingerprint.length()) {
-                    char hexChar = fingerprint[index++];
-                    int value = 0;
-                    if (hexChar >= '0' && hexChar <= '9') {
-                        value = hexChar - '0';
-                    } else if (hexChar >= 'a' && hexChar <= 'f') {
-                        value = hexChar - 'a' + 10;
-                    } else if (hexChar >= 'A' && hexChar <= 'F') {
-                        value = hexChar - 'A' + 10;
-                    }
-                    
-                    // If value is odd, draw a colored square
-                    if (value % 2 == 1) {
-                        // Generate a color based on the next few characters in the fingerprint
-                        std::string colorPart = fingerprint.substr(index % fingerprint.length(), 6);
-                        QString color = "#" + QString::fromStdString(colorPart);
-                        
-                        // Draw the square
-                        svg += QString("<rect x=\"%1\" y=\"%2\" width=\"1\" height=\"1\" fill=\"%3\" />")
-                                .arg(x)
-                                .arg(y)
-                                .arg(color);
-                        
-                        // Mirror the pattern for symmetry
-                        if (x < 4) {
-                            svg += QString("<rect x=\"%1\" y=\"%2\" width=\"1\" height=\"1\" fill=\"%3\" />")
-                                    .arg(9 - x)
-                                    .arg(y)
-                                    .arg(color);
-                        }
-                    }
-                }
-            }
-        }
-        
-        svg += "</svg>";
-        return svg;
-    }
-};
-
-
-// RSA implementation for signature verification and encryption
-// RSA Key Classes
-class RSAPublicKey {
-private:
-    BigInteger n; // modulus
-    BigInteger e; // public exponent
-public:
-    RSAPublicKey() {}
-    
-    RSAPublicKey(const BigInteger& n, const BigInteger& e) 
-        : n(n), e(e) {}
-        
-    bool verify(const std::string& message, const BigInteger& signature) const {
-        // Hash the message
-        std::string hash = SHA256::hash(message);
-        
-        // Verify signature
-        BigInteger hashInt(hash);
-        BigInteger decrypted = signature.modPow(e, n);
-        
-        return decrypted == hashInt;
-    }
-    
-    std::string serialize() const {
-        return n.toHexString() + ":" + e.toHexString();
-    }
-    
-    static RSAPublicKey deserialize(const std::string& serialized) {
-        size_t pos = serialized.find(':');
-        if (pos == std::string::npos) {
-            throw std::runtime_error("Invalid RSA public key format");
-        }
-        
-        BigInteger n(serialized.substr(0, pos));
-        BigInteger e(serialized.substr(pos + 1));
-        
-        return RSAPublicKey(n, e);
-    }
-};
-
-class RSAPrivateKey {
-private:
-    BigInteger n; // modulus
-    BigInteger e; // public exponent
-    BigInteger d; // private exponent
-public:
-    RSAPrivateKey() {}
-    
-    RSAPrivateKey(const BigInteger& n, const BigInteger& e, const BigInteger& d)
-        : n(n), e(e), d(d) {}
-        
-    BigInteger sign(const std::string& message) const {
-        if (d.isZero()) {
-            throw std::runtime_error("Private key not available for signing");
-        }
-        
-        // Hash the message
-        std::string hash = SHA256::hash(message);
-        
-        // Sign the hash
-        BigInteger hashInt(hash);
-        return hashInt.modPow(d, n);
-    }
-    
-    RSAPublicKey getPublicKey() const {
-        return RSAPublicKey(n, e);
-    }
-    
-    std::string serialize() const {
-        return n.toHexString() + ":" + e.toHexString() + ":" + d.toHexString();
-    }
-    
-    static RSAPrivateKey deserialize(const std::string& serialized) {
-        size_t pos1 = serialized.find(':');
-        if (pos1 == std::string::npos) {
-            throw std::runtime_error("Invalid RSA private key format");
-        }
-        
-        size_t pos2 = serialized.find(':', pos1 + 1);
-        if (pos2 == std::string::npos) {
-            throw std::runtime_error("Invalid RSA private key format");
-        }
-        
-        BigInteger n(serialized.substr(0, pos1));
-        BigInteger e(serialized.substr(pos1 + 1, pos2 - pos1 - 1));
-        BigInteger d(serialized.substr(pos2 + 1));
-        
-        return RSAPrivateKey(n, e, d);
-    }
-};
-
-// Key exchange state structure
-struct KeyExchangeState {
-    BigInteger localPrivateKey;   // Our private key
-    BigInteger localPublicKey;    // Our public key
-    BigInteger remotePublicKey;   // Their public key
-    std::string nonce;            // For replay protection
-    QDateTime initiatedAt;        // When key exchange started
-    bool completed = false;       // Whether the exchange is complete
-};
-
-class RSA {
-protected:
-    BigInteger n; // modulus
-    BigInteger e; // public exponent
-    BigInteger d; // private exponent (only stored on client)
-
-public:
-    // Default constructor
-    RSA() {}
-    
-    // Construct with components
-    RSA(const BigInteger& n, const BigInteger& e, const BigInteger& d = BigInteger(0))
-        : n(n), e(e), d(d) {}
-        
-    // Generate key visualization from a key
-    static std::string generateKeyVisualization(const BigInteger& key) {
-        // Use SHA-256 to create a unique fingerprint of the key
-        std::string keyStr = key.toHexString();
-        std::string fingerprint = SHA256::hash(keyStr);
-        return generateKeyVisualization(fingerprint);
-    }
-    
-    // Generate key visualization from a fingerprint
-    static std::string generateKeyVisualization(const std::string& fingerprint) {
-        // Format the fingerprint for visualization (groups of 4 characters)
-        std::stringstream ss;
-        for (size_t i = 0; i < fingerprint.length(); i += 4) {
-            if (i > 0 && i % 20 == 0) {
-                ss << "\n";
-            } else if (i > 0) {
-                ss << " ";
-            }
-            if (i + 4 <= fingerprint.length()) {
-                ss << fingerprint.substr(i, 4);
-            } else {
-                ss << fingerprint.substr(i);
-            }
-        }
-        return ss.str();
-    }
-    
-    // Generate an RSA key pair
-    static std::pair<RSA, RSA> generateKeyPair(int bits = 2048) {
-        // Generate two random prime numbers p and q
-        BigInteger p = generatePrime(bits / 2);
-        BigInteger q = generatePrime(bits / 2);
-        
-        // Calculate n = p * q
-        BigInteger n = p * q;
-        
-        // Calculate Euler's totient function: phi(n) = (p-1) * (q-1)
-        BigInteger phi = (p - BigInteger(1)) * (q - BigInteger(1));
-        
-        // Choose e such that 1 < e < phi and gcd(e, phi) = 1
-        BigInteger e = BigInteger(65537); // Commonly used value for e
-        
-        // Calculate d such that (d * e) % phi = 1
-        BigInteger d = modInverse(e, phi);
-        
-        // Create public and private keys
-        RSA publicKey(n, e);
-        RSA privateKey(n, e, d);
-        
-        return std::make_pair(publicKey, privateKey);
-    }
-    
-    // Sign a message using private key
-    BigInteger sign(const std::string& message) const {
-        if (d.isZero()) {
-            throw std::runtime_error("Cannot sign with public key");
-        }
-        
-        // Hash the message
-        std::string hash = SHA256::hash(message);
-        BigInteger hashInt(hash);
-        
-        // Calculate signature: sign = hash^d mod n
-        return hashInt.modPow(d, n);
-    }
-    
-    // Verify a signature using public key
-    bool verify(const std::string& message, const BigInteger& signature) const {
-        // Hash the message
-        std::string hash = SHA256::hash(message);
-        BigInteger hashInt(hash);
-        
-        // Calculate verification: verify = signature^e mod n
-        BigInteger verify = signature.modPow(e, n);
-        
-        // If verify == hashInt, signature is valid
-        return verify == hashInt;
-    }
-    
-    // Export public key as string
-    std::string exportPublicKey() const {
-        std::stringstream ss;
-        ss << n.toHexString() << ":" << e.toHexString();
-        return ss.str();
-    }
-    
-    // Import public key from string
-    static RSA importPublicKey(const std::string& keyStr) {
-        size_t pos = keyStr.find(':');
-        if (pos == std::string::npos) {
-            throw std::runtime_error("Invalid public key format");
-        }
-        
-        BigInteger n(keyStr.substr(0, pos));
-        BigInteger e(keyStr.substr(pos + 1));
-        
-        return RSA(n, e);
-    }
-    
-    // Get modulus
-    BigInteger getModulus() const {
-        return n;
-    }
-    
-    // Get public exponent
-    BigInteger getPublicExponent() const {
-        return e;
-    }
-    
-    // Get private exponent
-    BigInteger getPrivateExponent() const {
-        return d;
-    }
-    
-private:
-    // Generate a random prime number of specified bit length
-    static BigInteger generatePrime(int bits) {
-        // Generate random odd number of specified bit length
-        BigInteger p = BigInteger::generateRandom(bits);
-        
-        // Ensure it's odd
-        if (!p.isOdd()) {
-            p = p + BigInteger(1);
-        }
-        
-        // Simple primality test
-        while (!isPrime(p)) {
-            p = p + BigInteger(2); // Next odd number
-        }
-        
-        return p;
-    }
-    
-    // Simple primality test (for demonstration only)
-    static bool isPrime(const BigInteger& n) {
-        if (n <= BigInteger(1)) return false;
-        if (n <= BigInteger(3)) return true;
-        if (n.isOdd() == false) return false;
-        
-        // Check divisibility up to sqrt(n)
-        BigInteger i(3);
-        while (i * i <= n) {
-            BigInteger rem = n;
-            BigInteger temp = i;
-            
-            // Manually calculate n % i without using modulo operator
-            while (rem >= temp) {
-                BigInteger q = rem / temp;
-                rem = rem - (q * temp);
-            }
-            
-            if (rem.isZero()) return false;
-            i = i + BigInteger(2);
-        }
-        
-        return true;
-    }
-    
-    // Calculate modular inverse using Extended Euclidean Algorithm
-    static BigInteger modInverse(const BigInteger& a_in, const BigInteger& m_in) {
-        // Make copies to avoid modifying const arguments
-        BigInteger a = a_in;
-        BigInteger m = m_in;
-        BigInteger m0 = m_in;
-        
-        if (m == BigInteger(1)) {
-            return BigInteger(0);
-        }
-        
-        // Extended Euclidean Algorithm
-        BigInteger x0 = BigInteger(0);
-        BigInteger x1 = BigInteger(1);
-        
-        while (a > BigInteger(1)) {
-            // Calculate quotient and remainder manually without using % operator
-            BigInteger q = a / m;
-            BigInteger r = a; // Start with a
-            
-            // Calculate r = a - q * m (equivalent to a % m)
-            BigInteger temp = q * m;
-            if (r >= temp) {
-                r = r - temp;
-            }
-            
-            // Standard EEA update
-            a = m;
-            m = r;
-            
-            // Update coefficients
-            BigInteger temp_x = x0;
-            x0 = x1 - q * x0;
-            x1 = temp_x;
-        }
-        
-        // Make sure x1 is positive
-        if (x1 < BigInteger(0)) {
-            x1 = x1 + m0;
-        }
-        
-        return x1;
-    }
-};
-
-class CustomKDF {
-public:
-    static std::vector<uint8_t> deriveKey(const BigInteger& sharedSecret, const std::string& salt, size_t keyLength) {
-        // Convert shared secret to a string
-        std::string secretStr = sharedSecret.toHexString();
-        
-        // Initial hash using SHA-256
-        std::string hash = SHA256::hash(secretStr + salt);
-        
-        // Ensure we have enough bytes for the requested key length
-        while (hash.length() < keyLength * 2) { // *2 because each byte is represented by 2 hex chars
-            hash += SHA256::hash(hash + secretStr + salt);
-        }
-        
-        // Convert hex string to bytes
-        std::vector<uint8_t> key(keyLength);
-        for (size_t i = 0; i < keyLength; i++) {
-            std::string byteStr = hash.substr(i * 2, 2);
-            key[i] = static_cast<uint8_t>(std::stoi(byteStr, nullptr, 16));
-        }
-        
-        return key;
-    }
-};
-
-// Message structure for client-server communication
-struct Message {
-    enum Type {
-        CONNECT,
-        DISCONNECT,
-        CHAT_MESSAGE,
-        KEY_EXCHANGE_REQUEST,
-        KEY_EXCHANGE_RESPONSE,
-        PROOF_OF_WORK_CHALLENGE,
-        PROOF_OF_WORK_RESPONSE,
-        CLIENT_LIST_REQUEST,
-        CLIENT_LIST_RESPONSE,
-        DH_KEY_EXCHANGE_INIT,
-        DH_KEY_EXCHANGE_REPLY,
-        RSA_PUBLIC_KEY_REQUEST,
-        RSA_PUBLIC_KEY_RESPONSE
-    };
-    
-    Type type;
-    std::string sender;
-    std::string recipient;
-    std::string content;
-    std::string timestamp;
-    std::string nonce; // For replay protection
-    
-    static std::string serialize(const Message& msg) {
-        std::stringstream ss;
-        ss << static_cast<int>(msg.type) << '|'
-           << msg.sender << '|'
-           << msg.recipient << '|'
-           << msg.content << '|'
-           << msg.timestamp << '|'
-           << msg.nonce;
-        return ss.str();
-    }
-    
-    static Message deserialize(const std::string& data) {
-        Message msg;
-        std::stringstream ss(data);
-        std::string token;
-        
-        // Parse type
-        std::getline(ss, token, '|');
-        msg.type = static_cast<Type>(std::stoi(token));
-        
-        // Parse sender
-        std::getline(ss, msg.sender, '|');
-        
-        // Parse recipient
-        std::getline(ss, msg.recipient, '|');
-        
-        // Parse content
-        std::getline(ss, msg.content, '|');
-        
-        // Parse timestamp
-        std::getline(ss, msg.timestamp, '|');
-        
-        // Parse nonce (if available)
-        if (!ss.eof()) {
-            std::getline(ss, msg.nonce);
-        }
-        
-        return msg;
-    }
-    
-    static std::string getCurrentTimestamp() {
-        auto now = std::chrono::system_clock::now();
-        auto now_c = std::chrono::system_clock::to_time_t(now);
-        std::stringstream ss;
-        ss << std::put_time(std::localtime(&now_c), "%Y-%m-%d %H:%M:%S");
-        return ss.str();
-    }
-};
-
-// Proof of Work implementation
-class ProofOfWork {
-public:
-    static std::string solveChallenge(const std::string& challenge, int difficulty) {
-        int counter = 0;
-        std::string solution;
-        
-        while (true) {
-            solution = std::to_string(counter);
-            std::string hash = SHA256::hash(challenge + solution);
-            
-            // Check if the first 'difficulty' bits are zero
-            bool valid = true;
-            for (int i = 0; i < difficulty / 4; i++) {
-                if (hash[i] != '0') {
-                    valid = false;
-                    break;
-                }
-            }
-            
-            if (valid) {
-                return solution;
-            }
-            
-            counter++;
-        }
-    }
-};
-
-// Database Manager for storing messages
-class DatabaseManager {
-private:
-    QSqlDatabase db;
-    
-public:
-    DatabaseManager() {
-        // Create the database directory if it doesn't exist
-        QDir dir;
-        if (!dir.exists("data")) {
-            dir.mkdir("data");
-        }
-        
-        db = QSqlDatabase::addDatabase("QSQLITE");
-        db.setDatabaseName("data/messages.db");
-        
-        if (!db.open()) {
-            qCritical() << "Failed to open database:" << db.lastError().text();
-            return;
-        }
-        
-        // Create tables if they don't exist
-        QSqlQuery query;
-        
-        // Friends table
-        query.exec("CREATE TABLE IF NOT EXISTS friends ("
-                   "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                   "username TEXT UNIQUE NOT NULL, "
-                   "key_fingerprint TEXT, "
-                   "last_message_time TEXT)");
-        
-        // Messages table
-        query.exec("CREATE TABLE IF NOT EXISTS messages ("
-                   "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                   "sender TEXT NOT NULL, "
-                   "recipient TEXT NOT NULL, "
-                   "content TEXT NOT NULL, "
-                   "timestamp TEXT NOT NULL, "
-                   "is_sent INTEGER NOT NULL)");
-    }
-    
-    ~DatabaseManager() {
-        if (db.isOpen()) {
-            db.close();
-        }
-    }
-    
-    // Add or update a friend
-    bool saveFriend(const QString& username, const QString& keyFingerprint) {
-        QSqlQuery query;
-        query.prepare("INSERT OR REPLACE INTO friends (username, key_fingerprint) VALUES (?, ?)");
-        query.addBindValue(username);
-        query.addBindValue(keyFingerprint);
-        
-        return query.exec();
-    }
-    
-    // Get all friends
-    QVector<QPair<QString, QString>> getFriends() {
-        QVector<QPair<QString, QString>> friends;
-        
-        QSqlQuery query("SELECT username, key_fingerprint FROM friends ORDER BY username");
-        while (query.next()) {
-            QString username = query.value(0).toString();
-            QString keyFingerprint = query.value(1).toString();
-            friends.append(qMakePair(username, keyFingerprint));
-        }
-        
-        return friends;
-    }
-    
-    // Save a message
-    bool saveMessage(const QString& sender, const QString& recipient, const QString& content, const QString& timestamp, bool isSent) {
-        QSqlQuery query;
-        query.prepare("INSERT INTO messages (sender, recipient, content, timestamp, is_sent) VALUES (?, ?, ?, ?, ?)");
-        query.addBindValue(sender);
-        query.addBindValue(recipient);
-        query.addBindValue(content);
-        query.addBindValue(timestamp);
-        query.addBindValue(isSent ? 1 : 0);
-        
-        return query.exec();
-    }
-    
-    // Get messages between two users
-    QVector<QVariantMap> getMessages(const QString& user1, const QString& user2) {
-        QVector<QVariantMap> messages;
-        
-        QSqlQuery query;
-        query.prepare("SELECT sender, recipient, content, timestamp, is_sent FROM messages "
-                     "WHERE (sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?) "
-                     "ORDER BY timestamp");
-        query.addBindValue(user1);
-        query.addBindValue(user2);
-        query.addBindValue(user2);
-        query.addBindValue(user1);
-        
-        if (query.exec()) {
-            while (query.next()) {
-                QVariantMap message;
-                message["sender"] = query.value(0).toString();
-                message["recipient"] = query.value(1).toString();
-                message["content"] = query.value(2).toString();
-                message["timestamp"] = query.value(3).toString();
-                message["is_sent"] = query.value(4).toBool();
-                messages.append(message);
-            }
-        }
-        
-        return messages;
-    }
-    
-    // Update last message time for a friend
-    bool updateLastMessageTime(const QString& username, const QString& timestamp) {
-        QSqlQuery query;
-        query.prepare("UPDATE friends SET last_message_time = ? WHERE username = ?");
-        query.addBindValue(timestamp);
-        query.addBindValue(username);
-        
-        return query.exec();
-    }
-};
-
-// Socket wrapper for client-server communication
-class SocketWrapper : public QObject {
-    Q_OBJECT
-    
-private:
-    int socket;
-    std::thread receiveThread;
-    bool connected;
-    std::mutex sendMutex;
-    
-public:
-    SocketWrapper(QObject* parent = nullptr) : QObject(parent), socket(-1), connected(false) {}
-    
-    ~SocketWrapper() {
-        disconnect();
-    }
-    
-    bool connect(const std::string& hostname, int port) {
-        // Create socket
-        socket = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (socket == -1) {
-            emit error("Failed to create socket");
-            return false;
-        }
-        
-        // Set up server address
-        struct sockaddr_in serverAddr;
-        serverAddr.sin_family = AF_INET;
-        serverAddr.sin_port = htons(port);
-        
-        if (inet_pton(AF_INET, hostname.c_str(), &serverAddr.sin_addr) <= 0) {
-            emit error("Invalid address");
-            close(socket);
-            socket = -1;
-            return false;
-        }
-        
-        // Connect to server
-        if (::connect(socket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
-            emit error("Connection failed");
-            close(socket);
-            socket = -1;
-            return false;
-        }
-        
-        connected = true;
-        
-        // Start receive thread
-        receiveThread = std::thread(&SocketWrapper::receiveLoop, this);
-        
-        return true;
-    }
-    
-    void disconnect() {
-        if (connected) {
-            connected = false;
-            
-            if (socket != -1) {
-                close(socket);
-                socket = -1;
-            }
-            
-            if (receiveThread.joinable()) {
-                receiveThread.join();
-            }
-        }
-    }
-    
-    bool isConnected() const {
-        return connected;
-    }
-    
-    bool sendMessage(const Message& msg) {
-        if (!connected) {
-            return false;
-        }
-        
-        std::string data = Message::serialize(msg);
-        return sendMessage(data);
-    }
-    
-    bool sendMessage(const std::string& data) {
-        if (!connected) {
-            return false;
-        }
-        
-        std::lock_guard<std::mutex> lock(sendMutex);
-        ssize_t bytesSent = send(socket, data.c_str(), data.length(), 0);
-        
-        return bytesSent == static_cast<ssize_t>(data.length());
-    }
-    
-private:
-    void receiveLoop() {
-        char buffer[4096];
-        
-        while (connected) {
-            memset(buffer, 0, sizeof(buffer));
-            ssize_t bytesRead = recv(socket, buffer, sizeof(buffer) - 1, 0);
-            
-            if (bytesRead > 0) {
-                try {
-                    Message msg = Message::deserialize(std::string(buffer, bytesRead));
-                    emit messageReceived(msg);
-                } catch (const std::exception& e) {
-                    emit error(std::string("Failed to parse message: ") + e.what());
-                }
-            } else if (bytesRead == 0) {
-                // Connection closed by server
-                connected = false;
-                emit disconnected();
-                break;
-            } else {
-                // Error
-                connected = false;
-                emit error("Connection error");
-                break;
-            }
-        }
-    }
-    
-signals:
-    void messageReceived(const Message& msg);
-    void disconnected();
-    void error(const std::string& errorMsg);
-};
-
-// Chat message widget for displaying chat messages
-class ChatBubbleWidget : public QWidget {
-    Q_OBJECT
-    
-private:
-    QString sender;
-    QString message;
-    QString timestamp;
-    bool isSent;
-    
-public:
-    ChatBubbleWidget(const QString& sender, const QString& message, const QString& timestamp, bool isSent, QWidget* parent = nullptr)
-        : QWidget(parent), sender(sender), message(message), timestamp(timestamp), isSent(isSent) {
-        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
-        setMinimumHeight(50);
-    }
-    
-    QSize sizeHint() const override {
-        QFontMetrics fm(font());
-        int width = fm.horizontalAdvance(message) + 40; // Add padding
-        int height = fm.height() * (message.count('\n') + 1) + 40; // Add padding
-        
-        return QSize(width, height);
-    }
-    
-protected:
-    void paintEvent(QPaintEvent* event) override {
-        Q_UNUSED(event);
-        
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing);
-        
-        QFont nameFont = font();
-        nameFont.setBold(true);
-        
-        QFont messageFont = font();
-        
-        QFont timeFont = font();
-        timeFont.setPointSize(timeFont.pointSize() - 2);
-        
-        QFontMetrics nameFm(nameFont);
-        QFontMetrics messageFm(messageFont);
-        QFontMetrics timeFm(timeFont);
-        
-        // Calculate text dimensions
-        int nameWidth = nameFm.horizontalAdvance(sender);
-        int messageWidth = messageFm.horizontalAdvance(message);
-        int timeWidth = timeFm.horizontalAdvance(timestamp);
-        
-        int bubbleWidth = qMax(nameWidth, qMax(messageWidth, timeWidth)) + 20; // Add padding
-        int bubbleHeight = nameFm.height() + messageFm.height() * (message.count('\n') + 1) + timeFm.height() + 20; // Add padding
-        
-        // Calculate bubble position
-        int bubbleX = isSent ? width() - bubbleWidth - 10 : 10;
-        int bubbleY = 10;
-        
-        // Draw bubble background
-        QColor bgColor = isSent ? QColor(79, 195, 247) : QColor(220, 220, 220);
-        painter.setBrush(bgColor);
-        painter.setPen(Qt::NoPen);
-        
-        QRectF bubbleRect(bubbleX, bubbleY, bubbleWidth, bubbleHeight);
-        painter.drawRoundedRect(bubbleRect, 10, 10);
-        
-        // Draw sender name
-        painter.setFont(nameFont);
-        painter.setPen(Qt::black);
-        QRectF nameRect(bubbleX + 10, bubbleY + 5, bubbleWidth - 20, nameFm.height());
-        painter.drawText(nameRect, Qt::AlignLeft | Qt::AlignTop, sender);
-        
-        // Draw message text
-        painter.setFont(messageFont);
-        QRectF messageRect(bubbleX + 10, bubbleY + nameFm.height() + 5, bubbleWidth - 20, messageFm.height() * (message.count('\n') + 1));
-        painter.drawText(messageRect, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, message);
-        
-        // Draw timestamp
-        painter.setFont(timeFont);
-        painter.setPen(Qt::darkGray);
-        QRectF timeRect(bubbleX + 10, bubbleY + nameFm.height() + messageFm.height() * (message.count('\n') + 1) + 5, bubbleWidth - 20, timeFm.height());
-        painter.drawText(timeRect, Qt::AlignRight | Qt::AlignBottom, timestamp);
-    }
-};
-
-// Key visualization dialog
-class KeyVisualizationDialog : public QDialog {
-    Q_OBJECT
-    
-private:
-    QSvgWidget* svgWidget;
-    QLabel* keyFingerprintLabel;
-    QString fingerprint;
-    
-public:
-    KeyVisualizationDialog(const QString& keyFingerprint, QWidget* parent = nullptr)
-        : QDialog(parent), fingerprint(keyFingerprint) {
-        setWindowTitle("Key Visualization");
-        setMinimumSize(300, 350);
-        
-        QVBoxLayout* layout = new QVBoxLayout(this);
-        
-        // Create SVG widget
-        svgWidget = new QSvgWidget(this);
-        svgWidget->setMinimumSize(200, 200);
-        
-        // Generate SVG visualization from key fingerprint
-        QString svg = DiffieHellman::generateKeyVisualization(fingerprint.toStdString());
-        QByteArray svgData = svg.toUtf8();
-        svgWidget->load(svgData);
-        
-        // Create fingerprint label
-        keyFingerprintLabel = new QLabel(this);
-        keyFingerprintLabel->setText("Key Fingerprint:\n" + fingerprint);
-        keyFingerprintLabel->setAlignment(Qt::AlignCenter);
-        keyFingerprintLabel->setWordWrap(true);
-        
-        QLabel* instructions = new QLabel(this);
-        instructions->setText("Compare this image with your friend's to verify the secure connection.\n"
-                             "If the images match, your chat is secure.");
-        instructions->setAlignment(Qt::AlignCenter);
-        instructions->setWordWrap(true);
-        
-        QPushButton* closeButton = new QPushButton("Close", this);
-        connect(closeButton, &QPushButton::clicked, this, &QDialog::accept);
-        
-        layout->addWidget(svgWidget);
-        layout->addWidget(keyFingerprintLabel);
-        layout->addWidget(instructions);
-        layout->addWidget(closeButton);
-    }
-};
-
-// Main chat client
-class ChatClient : public QMainWindow {
-    Q_OBJECT
-    
-private:
-    // UI elements
-    QWidget* centralWidget;
-    QListWidget* friendsList;
-    QWidget* chatWidget;
-    QScrollArea* chatScrollArea;
-    QVBoxLayout* chatLayout;
-    QLineEdit* messageInput;
-    QPushButton* sendButton;
-    QLabel* connectionStatus;
-    QToolBar* toolBar;
-    QStatusBar* statusBar;
-    
-    // Client data
-    QString username;
-    QString currentChatPartner;
-    SocketWrapper* socket;
-    DatabaseManager* dbManager;
-    std::map<QString, BigInteger> sharedSecrets;
-    std::map<QString, std::string> keyFingerprints;
-    std::map<QString, QDateTime> keyCreationTimes;
-    int messageCounter;
-    
-    // Security data
-    std::map<std::string, BigInteger> encryptionKeys;
-    std::map<std::string, KeyExchangeState> peerKeyExchangeState;
-    std::map<std::string, Message> pendingKeyExchanges;
-    std::map<std::string, RSAPublicKey> peerRsaPublicKeys;
-    RSAPrivateKey rsaPrivateKey;
-    BigInteger peerPublicKey;
-    
-    // Diffie-Hellman parameters
-    const std::string dhPrime = "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74"
-                                "020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245"
-                                "E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1FE6"
-                                "49286651ECE45B3DC2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F83655D23DCA3AD96"
-                                "1C62F356208552BB9ED529077096966D670C354E4ABC9804F1746C08CA18217C32905E462E36CE3B"
-                                "E39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9DE2BCBF6955817183995497CEA956AE5"
-                                "15D2261898FA051015728E5A8AACAA68FFFFFFFFFFFFFFFF";
-    
-public:
-    ChatClient(QWidget* parent = nullptr) : QMainWindow(parent), messageCounter(0) {
-        setWindowTitle("Secure Chat");
-        setMinimumSize(800, 600);
-        
-        // Initialize database
-        dbManager = new DatabaseManager();
-        
-        // Initialize socket
-        socket = new SocketWrapper(this);
-        connect(socket, &SocketWrapper::messageReceived, this, &ChatClient::handleMessage);
-        connect(socket, &SocketWrapper::disconnected, this, &ChatClient::handleDisconnect);
-        // We'll connect socket error handler differently - needs QString parameter type matching
-        connect(socket, SIGNAL(error(QString)), this, SLOT(handleSocketError(QString)));
-        
-        // Set up UI
-        setupUI();
-        
-        // Show login dialog at startup
-        QTimer::singleShot(0, this, &ChatClient::showLoginDialog);
-    }
-    
-    // Forward declaration of handlers
-    void handleChatMessage(const Message& msg);
-    void handleKeyExchangeRequest(const Message& msg);
-    void handleKeyExchangeResponse(const Message& msg);
-    void handleProofOfWorkChallenge(const Message& msg);
-    void handleClientList(const Message& msg);
-    void handleKeyExchangeInit(const Message& msg);
-    void handleKeyExchangeReply(const Message& msg);
-    void handleRsaPublicKey(const Message& msg);
-    
-    // Handle socket disconnection
-    void handleDisconnect() {
-        connected = false;
-        ui->statusBar->showMessage("Disconnected from server", 3000);
-        ui->actionConnect->setEnabled(true);
-        ui->actionDisconnect->setEnabled(false);
-    }
-    
-    // Handle socket errors
-    void handleSocketError(const QString& errorMsg) {
-        QMessageBox::critical(this, "Connection Error", errorMsg);
-        ui->actionConnect->setEnabled(true);
-        ui->actionDisconnect->setEnabled(false);
-    }
-    
-    // Forward declaration of helper methods
-    void updateChatSecurityStatus(bool isSecure);
-    std::string generateNonce();
-    void showKeyVisualization(const BigInteger& sharedSecret);
-    void showKeyVisualization(const QString& fingerprint);
-    
-    ~ChatClient() {
-        if (socket) {
-            socket->disconnect();
-            delete socket;
-        }
-        
-        if (dbManager) {
-            delete dbManager;
-        }
-    }
-    
-private:
-    void setupUI() {
-        centralWidget = new QWidget(this);
-        setCentralWidget(centralWidget);
-        
-        QHBoxLayout* mainLayout = new QHBoxLayout(centralWidget);
-        
-        // Friends list section
-        QVBoxLayout* friendsLayout = new QVBoxLayout();
-        QLabel* friendsLabel = new QLabel("Friends", this);
-        friendsLabel->setAlignment(Qt::AlignCenter);
-        friendsLabel->setStyleSheet("font-weight: bold; font-size: 16px;");
-        
-        friendsList = new QListWidget(this);
-        friendsList->setMinimumWidth(200);
-        connect(friendsList, &QListWidget::itemClicked, this, &ChatClient::onFriendSelected);
-        
-        QPushButton* addFriendButton = new QPushButton("Add Friend", this);
-        connect(addFriendButton, &QPushButton::clicked, this, &ChatClient::showAddFriendDialog);
-        
-        friendsLayout->addWidget(friendsLabel);
-        friendsLayout->addWidget(friendsList);
-        friendsLayout->addWidget(addFriendButton);
-        
-        // Chat section
-        QVBoxLayout* chatContainerLayout = new QVBoxLayout();
-        
-        chatWidget = new QWidget(this);
-        chatWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-        
-        chatScrollArea = new QScrollArea(this);
-        chatScrollArea->setWidgetResizable(true);
-        chatScrollArea->setWidget(chatWidget);
-        chatScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        chatScrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-        
-        chatLayout = new QVBoxLayout(chatWidget);
-        chatLayout->setAlignment(Qt::AlignTop);
-        chatLayout->setSpacing(10);
-        
-        QHBoxLayout* inputLayout = new QHBoxLayout();
-        messageInput = new QLineEdit(this);
-        messageInput->setPlaceholderText("Type your message here...");
-        connect(messageInput, &QLineEdit::returnPressed, this, &ChatClient::sendMessage);
-        
-        sendButton = new QPushButton("Send", this);
-        connect(sendButton, &QPushButton::clicked, this, &ChatClient::sendMessage);
-        
-        inputLayout->addWidget(messageInput);
-        inputLayout->addWidget(sendButton);
-        
-        chatContainerLayout->addWidget(chatScrollArea);
-        chatContainerLayout->addLayout(inputLayout);
-        
-        mainLayout->addLayout(friendsLayout, 1);
-        mainLayout->addLayout(chatContainerLayout, 3);
-        
-        // Status bar
-        QStatusBar* statusBar = new QStatusBar(this);
-        setStatusBar(statusBar);
-        
-        connectionStatus = new QLabel("Not Connected", this);
-        statusBar->addPermanentWidget(connectionStatus);
-        
-        // Toolbar
-        toolBar = new QToolBar("Main Toolbar", this);
-        addToolBar(toolBar);
-        
-        QAction* connectAction = new QAction("Connect", this);
-        QAction* disconnectAction = new QAction("Disconnect", this);
-        QAction* viewKeyAction = new QAction("View Key", this);
-        QAction* refreshAction = new QAction("Refresh Friends", this);
-        
-        connect(connectAction, &QAction::triggered, this, &ChatClient::showConnectDialog);
-        connect(disconnectAction, &QAction::triggered, this, &ChatClient::disconnect);
-        connect(viewKeyAction, &QAction::triggered, this, &ChatClient::showCurrentKeyVisualization);
-        connect(refreshAction, &QAction::triggered, this, &ChatClient::requestClientList);
-        
-        toolBar->addAction(connectAction);
-        toolBar->addAction(disconnectAction);
-        toolBar->addAction(viewKeyAction);
-        toolBar->addAction(refreshAction);
-        
-        // Disable chat inputs initially
-        messageInput->setEnabled(false);
-        sendButton->setEnabled(false);
-    }
-    
-    void showLoginDialog() {
-        QDialog dialog(this);
-        dialog.setWindowTitle("Login");
-        dialog.setMinimumWidth(300);
-        
-        QVBoxLayout* layout = new QVBoxLayout(&dialog);
-        
-        QLabel* label = new QLabel("Enter your username:", &dialog);
-        QLineEdit* usernameInput = new QLineEdit(&dialog);
-        
-        QPushButton* okButton = new QPushButton("OK", &dialog);
-        connect(okButton, &QPushButton::clicked, &dialog, &QDialog::accept);
-        
-        layout->addWidget(label);
-        layout->addWidget(usernameInput);
-        layout->addWidget(okButton);
-        
-        if (dialog.exec() == QDialog::Accepted) {
-            username = usernameInput->text().trimmed();
-            if (username.isEmpty()) {
-                username = "User_" + QString::number(QDateTime::currentMSecsSinceEpoch() % 10000);
-            }
-            
-            setWindowTitle("Secure Chat - " + username);
-            showConnectDialog();
-        } else {
-            QApplication::quit();
-        }
-    }
-    
-    void showConnectDialog() {
-        QDialog dialog(this);
-        dialog.setWindowTitle("Connect to Server");
-        dialog.setMinimumWidth(300);
-        
-        QVBoxLayout* layout = new QVBoxLayout(&dialog);
-        
-        QLabel* hostLabel = new QLabel("Server address:", &dialog);
-        QLineEdit* hostInput = new QLineEdit("127.0.0.1", &dialog);
-        
-        QLabel* portLabel = new QLabel("Port:", &dialog);
-        QLineEdit* portInput = new QLineEdit("8000", &dialog);
-        
-        QPushButton* connectButton = new QPushButton("Connect", &dialog);
-        connect(connectButton, &QPushButton::clicked, &dialog, &QDialog::accept);
-        
-        layout->addWidget(hostLabel);
-        layout->addWidget(hostInput);
-        layout->addWidget(portLabel);
-        layout->addWidget(portInput);
-        layout->addWidget(connectButton);
-        
-        if (dialog.exec() == QDialog::Accepted) {
-            QString host = hostInput->text().trimmed();
-            int port = portInput->text().toInt();
-            
-            connectToServer(host, port);
-        }
-    }
-    
-    void showAddFriendDialog() {
-        QDialog dialog(this);
-        dialog.setWindowTitle("Add Friend");
-        dialog.setMinimumWidth(300);
-        
-        QVBoxLayout* layout = new QVBoxLayout(&dialog);
-        
-        QLabel* label = new QLabel("Enter friend's username:", &dialog);
-        QLineEdit* friendInput = new QLineEdit(&dialog);
-        
-        QPushButton* addButton = new QPushButton("Add", &dialog);
-        connect(addButton, &QPushButton::clicked, &dialog, &QDialog::accept);
-        
-        layout->addWidget(label);
-        layout->addWidget(friendInput);
-        layout->addWidget(addButton);
-        
-        if (dialog.exec() == QDialog::Accepted) {
-            QString friendName = friendInput->text().trimmed();
-            if (!friendName.isEmpty() && friendName != username) {
-                // Add friend locally
-                dbManager->saveFriend(friendName, "");
-                
-                // Initiate key exchange
-                initiateKeyExchange(friendName);
-                
-                // Update UI
-                loadFriendsList();
-            }
-        }
-    }
-    
-    void connectToServer(const QString& host, int port) {
-        if (socket->connect(host.toStdString(), port)) {
-            // Handle proof of work challenge first
-            // The actual connection logic continues in the handleMessage function
-            // when we receive the challenge
-            connectionStatus->setText("Connecting...");
-        } else {
-            QMessageBox::critical(this, "Connection Error", "Failed to connect to server");
-        }
-    }
-    
-    void disconnect() {
-        if (socket->isConnected()) {
-            // Send disconnect message
-            Message msg;
-            msg.type = Message::DISCONNECT;
-            msg.sender = username.toStdString();
-            msg.timestamp = Message::getCurrentTimestamp();
-            socket->sendMessage(msg);
-            
-            // Disconnect socket
-            socket->disconnect();
-            
-            // Update UI
-            connectionStatus->setText("Not Connected");
-            messageInput->setEnabled(false);
-            sendButton->setEnabled(false);
-        }
-    }
-    
-    void loadFriendsList() {
-        friendsList->clear();
-        
-        QVector<QPair<QString, QString>> friends = dbManager->getFriends();
-        for (const auto& friend_ : friends) {
-            QListWidgetItem* item = new QListWidgetItem(friend_.first);
-            friendsList->addItem(item);
-        }
-    }
-    
-    void loadChatHistory(const QString& partner) {
-        // Clear current chat
-        while (QLayoutItem* item = chatLayout->takeAt(0)) {
-            if (QWidget* widget = item->widget()) {
-                widget->deleteLater();
-            }
-            delete item;
-        }
-        
-        // Load message history
-        QVector<QVariantMap> messages = dbManager->getMessages(username, partner);
-        for (const QVariantMap& msg : messages) {
-            QString sender = msg["sender"].toString();
-            QString content = msg["content"].toString();
-            QString timestamp = msg["timestamp"].toString();
-            bool isSent = sender == username;
-            
-            addChatMessage(sender, content, timestamp, isSent);
-        }
-        
-        // Scroll to bottom
-        QTimer::singleShot(0, this, [this]() {
-            chatScrollArea->verticalScrollBar()->setValue(
-                chatScrollArea->verticalScrollBar()->maximum());
-        });
-    }
-    
-    void addChatMessage(const QString& sender, const QString& message, const QString& timestamp, bool isSent) {
-        ChatBubbleWidget* bubble = new ChatBubbleWidget(sender, message, timestamp, isSent);
-        chatLayout->addWidget(bubble);
-        
-        // Scroll to bottom
-        QTimer::singleShot(0, this, [this]() {
-            chatScrollArea->verticalScrollBar()->setValue(
-                chatScrollArea->verticalScrollBar()->maximum());
-        });
-    }
-    
-    void onFriendSelected(QListWidgetItem* item) {
-        if (item) {
-            currentChatPartner = item->text();
-            loadChatHistory(currentChatPartner);
-            
-            // Enable chat inputs
-            messageInput->setEnabled(true);
-            sendButton->setEnabled(true);
-            
-            // Check if we need to initiate key exchange
-            if (!sharedSecrets.count(currentChatPartner)) {
-                initiateKeyExchange(currentChatPartner);
-            } else {
-                // Check if key needs refresh (older than 1 week and at least 1 message sent)
-                QDateTime keyCreationTime = keyCreationTimes[currentChatPartner];
-                if (keyCreationTime.daysTo(QDateTime::currentDateTime()) >= 7 && messageCounter >= 1) {
-                    initiateKeyExchange(currentChatPartner);
-                }
-                // Also check if more than 100 messages have been exchanged
-                else if (messageCounter >= 100) {
-                    initiateKeyExchange(currentChatPartner);
-                }
-            }
-        }
-    }
-    
-    // Utility methods for security
-    std::string generateNonce() {
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::uniform_int_distribution<uint32_t> dis(0, UINT32_MAX);
-        
-        std::stringstream ss;
-        for (int i = 0; i < 4; i++) {
-            ss << std::hex << std::setw(8) << std::setfill('0') << dis(gen);
-        }
-        return ss.str();
-    }
-    
-    void logError(const QString& message) {
-        qDebug() << "ERROR: " << message;
-        statusBar->showMessage("Error: " + message, 5000);
-    }
-    
-    void updateChatSecurityStatus(bool secure) {
-        if (secure) {
-            statusBar->showMessage("Secure chat established", 3000);
-            // Update UI to show secure status
-        } else {
-            statusBar->showMessage("Insecure chat", 3000);
-            // Update UI to show insecure status
-        }
-    }
-    
-    void showKeyVisualization(const BigInteger& sharedSecret) {
-        // Convert BigInteger to fingerprint
-        QString fingerprint = QString::fromStdString(DiffieHellman::generateKeyVisualization(sharedSecret));
-        showKeyVisualization(fingerprint);
-    }
-    
-    void showKeyVisualization(const QString& fingerprint) {
-        KeyVisualizationDialog* dialog = new KeyVisualizationDialog(fingerprint, this);
-        dialog->setAttribute(Qt::WA_DeleteOnClose);
-        dialog->show();
-    }
-    
-    // Method to start a key exchange with another client
-    void initiateKeyExchange(const QString& partner) {
-        if (partner.isEmpty() || !socket->isConnected()) {
-            return;
-        }
-        
-        // Create a new DiffieHellman instance
-        DiffieHellman dh(dhPrime);
-        BigInteger privateKey = dh.generatePrivateKey();
-        BigInteger publicKey = dh.generatePublicKey(privateKey);
-        
-        // Sign the public key with our RSA private key
-        BigInteger signature = rsaPrivateKey.sign(publicKey.toHexString());
-        
-        // Create and send the key exchange initiation message
-        Message msg;
-        msg.type = Message::DH_KEY_EXCHANGE_INIT;
-        msg.sender = username.toStdString();
-        msg.recipient = partner.toStdString();
-        msg.content = publicKey.toHexString() + ":" + signature.toHexString();
-        msg.timestamp = QDateTime::currentDateTime().toString(Qt::ISODate).toStdString();
-        msg.nonce = generateNonce();
-        
-        // Store the key exchange state
-        KeyExchangeState state;
-        state.localPrivateKey = privateKey;
-        state.localPublicKey = publicKey;
-        state.remotePublicKey = BigInteger(0);
-        state.nonce = msg.nonce;
-        state.initiatedAt = QDateTime::currentDateTime();
-        state.completed = false;
-        peerKeyExchangeState[partner.toStdString()] = state;
-        
-        socket->sendMessage(Message::serialize(msg));
-        statusBar->showMessage("Key exchange initiated with " + partner, 3000);
-    }
-    
-    void showCurrentKeyVisualization() {
-        if (currentChatPartner.isEmpty()) {
-            QMessageBox::information(this, "No Active Chat", "Please select a chat partner first.");
-            return;
-        }
-        
-        auto it = sharedSecrets.find(currentChatPartner);
-        if (it == sharedSecrets.end()) {
-            QMessageBox::warning(this, "No Secure Channel", 
-                                "No secure channel established with " + currentChatPartner + ". Please wait for key exchange.");
-            return;
-        }
-        
-        showKeyVisualization(it->second);
-    }
-    
-    void requestRsaPublicKey(const std::string& username) {
-        Message request;
-        request.type = Message::RSA_PUBLIC_KEY_REQUEST;
-        request.sender = this->username.toStdString();
-        request.recipient = username;
-        socket->sendMessage(Message::serialize(request));
-    }
-    
-    void sendMessage() {
-        if (currentChatPartner.isEmpty() || !socket->isConnected()) {
-            return;
-        }
-        
-        QString content = messageInput->text().trimmed();
-        if (content.isEmpty()) {
-            return;
-        }
-        
-        // Check if we have a shared secret for this partner
-        if (sharedSecrets.find(currentChatPartner) == sharedSecrets.end()) {
-            QMessageBox::warning(this, "No Secure Channel", 
-                                "No secure channel established with " + currentChatPartner + ". Please wait for key exchange.");
-            return;
-        }
-        
-        // Send the message
-        Message msg;
-        msg.type = Message::CHAT_MESSAGE;
-        msg.sender = username.toStdString();
-        msg.recipient = currentChatPartner.toStdString();
-        msg.content = content.toStdString();
-        msg.timestamp = Message::getCurrentTimestamp();
-        
-        if (socket->sendMessage(msg)) {
-            // Add to local chat
-            addChatMessage(username, content, QString::fromStdString(msg.timestamp), true);
-            
-            // Save to database
-            dbManager->saveMessage(username, currentChatPartner, content, QString::fromStdString(msg.timestamp), true);
-            dbManager->updateLastMessageTime(currentChatPartner, QString::fromStdString(msg.timestamp));
-            
-            // Clear input
-            messageInput->clear();
-            
-            // Increment message counter for perfect forward secrecy
-            messageCounter++;
-            
-            // Check if key needs refresh (more than 100 messages)
-            if (messageCounter >= 100) {
-                initiateKeyExchange(currentChatPartner);
-                messageCounter = 0;
-            }
-        } else {
-            QMessageBox::warning(this, "Send Error", "Failed to send message");
-        }
-    }
-    
-    // Function to handle key exchange response
-    // This is an empty placeholder to be implemented later
-    void logError(const QString& message) {
-        qDebug() << "ERROR: " << message;
-    }
-    
-    // Handle Diffie-Hellman key exchange initialization from remote client
-    void handleKeyExchangeInit(const Message& msg) {
-        // Parse the message content: publicKey|signature
-        std::string content = msg.content;
-        size_t separatorPos = content.find('|');
-        if (separatorPos == std::string::npos) {
-            logError("Invalid key exchange format");
-            return;
-        }
-        
-        std::string peerPublicKeyStr = content.substr(0, separatorPos);
-        std::string signatureStr = content.substr(separatorPos + 1);
-        
-        BigInteger peerPublicKey(peerPublicKeyStr);
-        BigInteger signature(signatureStr);
-        
-        // Get peer's RSA public key
-        auto it = peerRsaPublicKeys.find(msg.sender);
-        if (it == peerRsaPublicKeys.end()) {
-            // We don't have peer's public key yet, request it
-            requestRsaPublicKey(msg.sender);
-            
-            // Store the message to process later when we have the key
-            pendingKeyExchanges[msg.sender] = msg;
-            return;
-        }
-        
-        // Verify the signature
-        RSA peerRsaKey = it->second;
-        if (!peerRsaKey.verify(peerPublicKeyStr, signature)) {
-            logError("Invalid signature in key exchange");
-            return;
-        }
-        
-        // Create our DH instance
-        DiffieHellman dh(DH_PRIME);
-        BigInteger ourPublicKey = dh.getPublicKey();
-        
-        // Calculate shared secret
-        BigInteger sharedSecret;
-        try {
-            sharedSecret = dh.computeSharedSecret(peerPublicKey);
-        } catch (const std::exception& e) {
-            logError("Error computing shared secret: " + QString(e.what()));
-            return;
-        }
-        
-        // Sign our public key
-        BigInteger ourSignature = rsaPrivateKey.sign(ourPublicKey.toHexString());
-        
-        // Prepare response content: publicKey|signature
-        std::string responseContent = ourPublicKey.toHexString() + "|" + ourSignature.toHexString();
-        
-        // Send key exchange response
-        Message response;
-        response.type = Message::DH_KEY_EXCHANGE_REPLY;
-        response.sender = username.toStdString();
-        response.recipient = msg.sender;
-        response.content = responseContent;
-        response.timestamp = Message::getCurrentTimestamp();
-        response.nonce = generateNonce();
-        
-        if (socket->sendMessage(response)) {
-            // Store the key exchange state
-            peerKeyExchangeState[msg.sender] = {
-                dh,                    // DH object
-                std::chrono::system_clock::now(),  // creation time
-                true,                  // key exchange completed
-                peerPublicKey,         // peer's DH public key
-                sharedSecret           // shared secret
-            };
-            
-            // Derive the encryption key using KDF
-            std::string salt = msg.sender + username.toStdString();
-            std::vector<uint8_t> key = CustomKDF::deriveKey(sharedSecret, salt, 32);
-            
-            // Store the key for this peer
-            encryptionKeys[msg.sender] = key;
-            
-            // Update the UI to show the secure status
-            QString peer = QString::fromStdString(msg.sender);
-            if (peer == currentChatPartner) {
-                updateChatSecurityStatus(true);
-                showKeyVisualization(sharedSecret);
-            }
-            
-            ui->statusBar->showMessage("Secure key exchange completed with " + peer, 3000);
-        }
-    }
-    
-    // Handle Diffie-Hellman key exchange reply from remote client
-    void handleKeyExchangeReply(const Message& msg) {
-        // Check if we have an ongoing key exchange with this peer
-        auto stateIt = peerKeyExchangeState.find(msg.sender);
-        if (stateIt == peerKeyExchangeState.end() || stateIt->second.completed) {
-            logError("Unexpected key exchange response");
-            return;
-        }
-        
-        // Parse the message content: publicKey|signature
-        std::string content = msg.content;
-        size_t separatorPos = content.find('|');
-        if (separatorPos == std::string::npos) {
-            logError("Invalid key exchange format");
-            return;
-        }
-        
-        std::string peerPublicKeyStr = content.substr(0, separatorPos);
-        std::string signatureStr = content.substr(separatorPos + 1);
-        
-        BigInteger peerPublicKey(peerPublicKeyStr);
-        BigInteger signature(signatureStr);
-        
-        // Get peer's RSA public key
-        auto it = peerRsaPublicKeys.find(msg.sender);
-        if (it == peerRsaPublicKeys.end()) {
-            // We don't have peer's public key yet, this shouldn't happen
-            logError("Missing RSA public key for peer");
-            return;
-        }
-        
-        // Verify the signature
-        RSA peerRsaKey = it->second;
-        if (!peerRsaKey.verify(peerPublicKeyStr, signature)) {
-            logError("Invalid signature in key exchange");
-            return;
-        }
-        
-        // Calculate shared secret using our stored DH instance
-        BigInteger sharedSecret;
-        try {
-            sharedSecret = stateIt->second.dh.computeSharedSecret(peerPublicKey);
-        } catch (const std::exception& e) {
-            logError("Error computing shared secret: " + QString(e.what()));
-            return;
-        }
-        
-        // Update the key exchange state
-        stateIt->second.completed = true;
-        stateIt->second.peerPublicKey = peerPublicKey;
-        stateIt->second.sharedSecret = sharedSecret;
-        
-        // Derive the encryption key using KDF
-        std::string salt = msg.sender + username.toStdString();
-        std::vector<uint8_t> key = CustomKDF::deriveKey(sharedSecret, salt, 32);
-        
-        // Store the key for this peer
-        encryptionKeys[msg.sender] = key;
-        
-        // Update the UI to show the secure status
-        QString peer = QString::fromStdString(msg.sender);
-        if (peer == currentChatPartner) {
-            updateChatSecurityStatus(true);
-            showKeyVisualization(sharedSecret);
-        }
-        
-        ui->statusBar->showMessage("Secure key exchange completed with " + peer, 3000);
-    }
-    
-    void handleKeyExchangeRequest(const Message& msg) {
-        QString sender = QString::fromStdString(msg.sender);
-        
-        // Create DH instance with the specified parameters
-        DiffieHellman dh(dhPrime);
-        
-        // Get our public key
-        BigInteger publicKey = dh.getPublicKey();
-        
-        // Compute shared secret using the other party's public key
-        BigInteger otherPublicKey(msg.content);
-        BigInteger sharedSecret = dh.computeSharedSecret(otherPublicKey);
-        
-        // Derive a 256-bit key using our custom KDF
-        std::string salt = username.toStdString() + msg.sender;
-        std::vector<uint8_t> derivedKey = CustomKDF::deriveKey(sharedSecret, salt, 32);
-        
-        // Compute key fingerprint for visualization
-        std::string fingerprint = DiffieHellman::visualizeKey(sharedSecret);
-        
-        // Store the shared secret and fingerprint
-        sharedSecrets[sender] = sharedSecret;
-        keyFingerprints[sender] = fingerprint;
-        keyCreationTimes[sender] = QDateTime::currentDateTime();
-        
-        // Send key exchange response
-        Message response;
-        response.type = Message::KEY_EXCHANGE_RESPONSE;
-        response.sender = username.toStdString();
-        response.recipient = msg.sender;
-        response.content = publicKey.toHexString();
-        response.timestamp = Message::getCurrentTimestamp();
-        
-        socket->sendMessage(response);
-        
-        // Save friend with key fingerprint
-        dbManager->saveFriend(sender, QString::fromStdString(fingerprint));
-        
-        // Show key visualization if this is the current chat partner
-        if (sender == currentChatPartner) {
-            QTimer::singleShot(0, this, [this, fingerprint]() {
-                showKeyVisualization(QString::fromStdString(fingerprint));
-            });
-        }
-    }
-    
-    void handleKeyExchangeResponse(const Message& msg) {
-        QString sender = QString::fromStdString(msg.sender);
-        
-        // Get the DH instance for this exchange
-        static std::map<QString, DiffieHellman> dhInstances;
-        if (dhInstances.find(sender) == dhInstances.end()) {
-            return;
-        }
-        
-        DiffieHellman& dh = dhInstances[sender];
-        
-        // Compute shared secret using the other party's public key
-        BigInteger otherPublicKey(msg.content);
-        BigInteger sharedSecret = dh.computeSharedSecret(otherPublicKey);
-        
-        // Derive a 256-bit key using our custom KDF
-        std::string salt = username.toStdString() + msg.sender;
-        std::vector<uint8_t> derivedKey = CustomKDF::deriveKey(sharedSecret, salt, 32);
-        
-        // Compute key fingerprint for visualization
-        std::string fingerprint = DiffieHellman::visualizeKey(sharedSecret);
-        
-        // Store the shared secret and fingerprint
-        sharedSecrets[sender] = sharedSecret;
-        keyFingerprints[sender] = fingerprint;
-        keyCreationTimes[sender] = QDateTime::currentDateTime();
-        
-        // Save friend with key fingerprint
-        dbManager->saveFriend(sender, QString::fromStdString(fingerprint));
-        
-        // Show key visualization if this is the current chat partner
-        if (sender == currentChatPartner) {
-            QTimer::singleShot(0, this, [this, fingerprint]() {
-                showKeyVisualization(QString::fromStdString(fingerprint));
-            });
-        }
-        
-        // Clean up
-        dhInstances.erase(sender);
-    }
-    
-    // Implementation of key visualization will be done in a separate PR
-    
-    // Forward declaration for showing key visualization
-    void showCurrentKeyVisualization();
-    
-    void requestClientList() {
-        if (!socket->isConnected()) {
-            return;
-        }
-        
-        Message msg;
-        msg.type = Message::CLIENT_LIST_REQUEST;
-        msg.sender = username.toStdString();
-        msg.timestamp = Message::getCurrentTimestamp();
-        
-        socket->sendMessage(msg);
-    }
-    
-    void handleClientList(const Message& msg) {
-        std::string clientListStr = msg.content;
-        QStringList clients = QString::fromStdString(clientListStr).split(",");
-        
-        for (const QString& client : clients) {
-            if (client != username && client.length() > 0) {
-                // Add to database if not exists
-                dbManager->saveFriend(client, "");
-            }
-        }
-        
-        // Update UI
-        loadFriendsList();
-    }
-    
-public slots:
-    void handleMessage(const Message& msg) {
-        switch (msg.type) {
-            case Message::CHAT_MESSAGE:
-                handleChatMessage(msg);
-                break;
-                
-            case Message::KEY_EXCHANGE_REQUEST:
-                handleKeyExchangeRequest(msg);
-                break;
-                
-            case Message::KEY_EXCHANGE_RESPONSE:
-                handleKeyExchangeResponse(msg);
-                break;
-                
-            case Message::PROOF_OF_WORK_CHALLENGE:
-                handleProofOfWorkChallenge(msg);
-                break;
-                
-            case Message::CLIENT_LIST_RESPONSE:
-                handleClientList(msg);
-                break;
-                
-            case Message::DH_KEY_EXCHANGE_INIT:
-                handleKeyExchangeInit(msg);
-                break;
-                
-            case Message::DH_KEY_EXCHANGE_REPLY:
-                handleKeyExchangeReply(msg);
-                break;
-                
-            case Message::RSA_PUBLIC_KEY_RESPONSE:
-                handleRsaPublicKey(msg);
-                break;
-                
-            default:
-                qDebug() << "Unknown message type received: " << static_cast<int>(msg.type);
-                break;
-        }
-    }
-    
-    void handleChatMessage(const Message& msg) {
-        QString sender = QString::fromStdString(msg.sender);
-        QString content = QString::fromStdString(msg.content);
-        QString timestamp = QString::fromStdString(msg.timestamp);
-        
-        // Save to database
-        dbManager->saveMessage(sender, username, content, timestamp, false);
-        dbManager->updateLastMessageTime(sender, timestamp);
-        
-        // If this is from the current chat partner, update the chat view
-        if (sender == currentChatPartner) {
-            addChatMessage(sender, content, timestamp, false);
-        }
-        
-        // Increment message counter for perfect forward secrecy
-        if (sender == currentChatPartner) {
-            messageCounter++;
-            
-            // Check if key needs refresh (more than 100 messages)
-            if (messageCounter >= 100) {
-                initiateKeyExchange(currentChatPartner);
-                messageCounter = 0;
-            }
-        }
-    }
-    
-    void handleProofOfWorkChallenge(const Message& msg) {
-        // Run proof of work solver in a separate thread to avoid blocking UI
-        QFuture<void> future = QtConcurrent::run([this, msg]() {
-            std::string challenge = msg.content;
-            std::string solution = ProofOfWork::solveChallenge(challenge, 16);
-            
-            // Send the solution
-            Message response;
-            response.type = Message::PROOF_OF_WORK_RESPONSE;
-            response.sender = username.toStdString();
-            response.content = solution;
-            response.timestamp = Message::getCurrentTimestamp();
-            
-            socket->sendMessage(response);
-            
-            // After sending solution, identify ourselves to the server
-            Message connectMsg;
-            connectMsg.type = Message::CONNECT;
-            connectMsg.sender = username.toStdString();
-            connectMsg.timestamp = Message::getCurrentTimestamp();
-            
-            socket->sendMessage(connectMsg);
-            
-            // Update UI
-            QMetaObject::invokeMethod(this, "updateConnectionStatus", Qt::QueuedConnection);
-        });
-    }
-    
-    void updateConnectionStatus() {
-        connectionStatus->setText("Connected as " + username);
-        
-        // Request client list
-        requestClientList();
-        
-        // Load friends list
-        loadFriendsList();
-    }
-    
-    // This is handled by our earlier implementation
-    void handleSocketError(const std::string& errorMsg) {
-        handleSocketError(QString::fromStdString(errorMsg));
-    }
-};
-
-int main(int argc, char *argv[]) {
-    QApplication app(argc, argv);
-    
-    ChatClient client;
-    client.show();
-    
-    return app.exec();
-}
-
-
-
-
-
-#include "client.moc"
+/**
+ * client.cpp - PX Encrypted Calling Application Client GUI
+ * 
+ * This client component handles user interface, call establishment,
+ * encryption using the custom PX protocol, and Diffie-Hellman key exchange
+ * with visualization.
+ */
+
+ #include <QApplication>
+ #include <QMainWindow>
+ #include <QVBoxLayout>
+ #include <QHBoxLayout>
+ #include <QGridLayout>
+ #include <QPushButton>
+ #include <QLabel>
+ #include <QLineEdit>
+ #include <QListWidget>
+ #include <QComboBox>
+ #include <QGroupBox>
+ #include <QMessageBox>
+ #include <QInputDialog>
+ #include <QTimer>
+ #include <QDateTime>
+ #include <QScreen>
+ #include <QPixmap>
+ #include <QPainter>
+ #include <QWidget>
+ #include <QStyleFactory>
+ #include <QTabWidget>
+ #include <QCheckBox>
+ #include <QDesktopWidget>
+ #include <QScrollArea>
+ #include <QTextEdit>
+ #include <QFontDatabase>
+ #include <QThread>
+ 
+ // Network headers
+ #include <sys/socket.h>
+ #include <netinet/in.h>
+ #include <arpa/inet.h>
+ #include <unistd.h>
+ #include <fcntl.h>
+ #include <poll.h>
+ 
+ // Standard library
+ #include <iostream>
+ #include <vector>
+ #include <map>
+ #include <string>
+ #include <thread>
+ #include <mutex>
+ #include <chrono>
+ #include <random>
+ #include <functional>
+ #include <cstring>
+ #include <cstdlib>
+ #include <cstdint>
+ #include <algorithm>
+ #include <condition_variable>
+ #include <sstream>
+ #include <iomanip>
+ #include <cmath>
+ #include <memory>
+ #include <set>
+ 
+ // Audio support with Opus
+ extern "C" {
+     #include <opus/opus.h>
+ }
+ 
+ // Constants
+ constexpr int DEFAULT_SERVER_PORT = 8000;
+ constexpr int DEFAULT_TURN_PORT = 3478;
+ constexpr int MAX_BUFFER_SIZE = 8192;
+ constexpr int HEARTBEAT_INTERVAL = 10; // seconds
+ constexpr uint16_t PROTOCOL_VERSION = 1;
+ constexpr int OPUS_SAMPLE_RATE = 48000;
+ constexpr int OPUS_CHANNELS = 1;
+ constexpr int OPUS_FRAME_SIZE = 960; // 20ms at 48kHz
+ constexpr int DH_KEY_SIZE = 256; // bits
+ constexpr int MAX_RETRIES = 5;
+ constexpr int RETRY_DELAY = 1000; // milliseconds
+ constexpr int CALL_TIMEOUT = 30000; // milliseconds
+ 
+ // Packet types (protocol definition - matches server.cpp)
+ enum PacketType {
+     REGISTER = 1,
+     REGISTER_ACK = 2,
+     CALL_REQUEST = 3,
+     CALL_RESPONSE = 4,
+     CALL_ACCEPT = 5,
+     CALL_REJECT = 6,
+     CALL_END = 7,
+     P2P_ATTEMPT = 8,
+     P2P_SUCCESS = 9,
+     P2P_FAILURE = 10,
+     RELAY_DATA = 11,
+     HEARTBEAT = 12,
+     HEARTBEAT_ACK = 13,
+     ERROR = 14,
+     USER_DISCOVERY = 15,
+     USER_LIST = 16
+ };
+ 
+ // PX Packet Header structure 
+ struct PacketHeader {
+     uint16_t version;
+     uint8_t type;
+     uint16_t length;
+     uint32_t sender_id;
+     uint32_t receiver_id;
+     uint32_t call_id;
+     uint32_t seq_num;
+     uint32_t timestamp;
+ };
+ 
+ // Call state
+ enum CallState {
+     IDLE,
+     OUTGOING_CALL,
+     INCOMING_CALL,
+     CALL_IN_PROGRESS,
+     P2P_NEGOTIATING
+ };
+ 
+ // Media types
+ enum MediaType {
+     AUDIO = 0,
+     VIDEO = 1,
+     SCREEN = 2
+ };
+ 
+ // User info structure
+ struct UserInfo {
+     uint32_t user_id;
+     std::string username;
+ };
+ 
+ // Call info structure
+ struct CallInfo {
+     uint32_t call_id;
+     uint32_t peer_id;
+     std::string peer_username;
+     bool is_video;
+     bool is_screen_sharing;
+     bool is_p2p;
+     uint32_t local_seq_num;
+     uint32_t remote_seq_num;
+     std::chrono::time_point<std::chrono::steady_clock> start_time;
+ };
+ 
+ // Forward declarations for encryption methods
+ class DHKeyExchange;
+ class PXEncryption;
+ 
+ // ----------------
+ // UTILITY FUNCTIONS
+ // ----------------
+ 
+ // Helper function to convert binary to hex string
+ std::string bin2hex(const std::vector<uint8_t>& data) {
+     std::stringstream ss;
+     ss << std::hex << std::setfill('0');
+     for (auto byte : data) {
+         ss << std::setw(2) << static_cast<int>(byte);
+     }
+     return ss.str();
+ }
+ 
+ // Helper function to convert hex string to binary
+ std::vector<uint8_t> hex2bin(const std::string& hex) {
+     std::vector<uint8_t> bytes;
+     for (size_t i = 0; i < hex.length(); i += 2) {
+         std::string byteString = hex.substr(i, 2);
+         uint8_t byte = static_cast<uint8_t>(std::stoi(byteString, nullptr, 16));
+         bytes.push_back(byte);
+     }
+     return bytes;
+ }
+ 
+ // Secure random number generator
+ class SecureRandom {
+ private:
+     std::random_device rd;
+     std::mt19937 gen;
+     
+ public:
+     SecureRandom() : gen(rd()) {}
+     
+     template <typename T>
+     T getRandomNumber(T min, T max) {
+         std::uniform_int_distribution<T> dist(min, max);
+         return dist(gen);
+     }
+     
+     std::vector<uint8_t> getRandomBytes(size_t count) {
+         std::vector<uint8_t> bytes(count);
+         std::uniform_int_distribution<int> dist(0, 255);
+         for (size_t i = 0; i < count; ++i) {
+             bytes[i] = static_cast<uint8_t>(dist(gen));
+         }
+         return bytes;
+     }
+ };
+ 
+ // Global instance of secure random
+ SecureRandom secureRandom;
+ 
+ // ----------------
+ // DIFFIE-HELLMAN KEY EXCHANGE
+ // ----------------
+ 
+ // Diffie-Hellman key exchange implementation
+ class DHKeyExchange {
+ private:
+     // Prime modulus p and base g
+     std::vector<uint8_t> p; // Large prime
+     std::vector<uint8_t> g; // Generator
+     
+     // Private key a
+     std::vector<uint8_t> privateKey;
+     
+     // Public keys
+     std::vector<uint8_t> publicKey;  // g^a mod p
+     std::vector<uint8_t> peerPublicKey; // g^b mod p
+     
+     // Shared secret
+     std::vector<uint8_t> sharedSecret; // (g^b)^a mod p = g^(ab) mod p
+     
+     // Hash of our public key (for commitment)
+     std::vector<uint8_t> publicKeyHash;
+     
+     // Montgomery modular exponentiation (a^b mod n)
+     std::vector<uint8_t> modExp(const std::vector<uint8_t>& base, const std::vector<uint8_t>& exponent, const std::vector<uint8_t>& modulus) {
+         if (modulus.size() == 0 || (modulus.size() == 1 && modulus[0] == 0)) {
+             throw std::invalid_argument("Modulus cannot be 0");
+         }
+         
+         // Convert to big integers (simple implementation)
+         std::vector<uint8_t> result = {1};
+         std::vector<uint8_t> baseVal = base;
+         std::vector<uint8_t> expVal = exponent;
+         
+         while (!isZero(expVal)) {
+             if (expVal[0] & 1) {
+                 result = modMul(result, baseVal, modulus);
+             }
+             baseVal = modMul(baseVal, baseVal, modulus);
+             expVal = divideBy2(expVal);
+         }
+         
+         return result;
+     }
+     
+     // Check if a big integer is zero
+     bool isZero(const std::vector<uint8_t>& num) {
+         for (auto byte : num) {
+             if (byte != 0) {
+                 return false;
+             }
+         }
+         return true;
+     }
+     
+     // Divide a big integer by 2
+     std::vector<uint8_t> divideBy2(const std::vector<uint8_t>& num) {
+         std::vector<uint8_t> result(num.size());
+         uint16_t remainder = 0;
+         
+         for (int i = num.size() - 1; i >= 0; --i) {
+             uint16_t current = num[i] + (remainder << 8);
+             result[i] = current >> 1;
+             remainder = current & 1;
+         }
+         
+         // Remove leading zeros
+         while (result.size() > 1 && result.back() == 0) {
+             result.pop_back();
+         }
+         
+         return result;
+     }
+     
+     // Modular multiplication (a * b mod n)
+     std::vector<uint8_t> modMul(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b, const std::vector<uint8_t>& n) {
+         std::vector<uint8_t> result(a.size() + b.size(), 0);
+         
+         // Multiply
+         for (size_t i = 0; i < a.size(); ++i) {
+             uint16_t carry = 0;
+             for (size_t j = 0; j < b.size() || carry; ++j) {
+                 uint16_t bValue = (j < b.size()) ? b[j] : 0;
+                 uint32_t current = result[i + j] + (uint32_t)a[i] * bValue + carry;
+                 result[i + j] = current & 0xFF;
+                 carry = current >> 8;
+             }
+         }
+         
+         // Remove leading zeros
+         while (result.size() > 1 && result.back() == 0) {
+             result.pop_back();
+         }
+         
+         // Modulo
+         return modDivide(result, n);
+     }
+     
+     // Modular division (a mod n)
+     std::vector<uint8_t> modDivide(const std::vector<uint8_t>& a, const std::vector<uint8_t>& n) {
+         // Simple mod implementation - just for illustration
+         // In a real app, would use a full bignum library
+         
+         // If a < n, return a
+         if (compare(a, n) < 0) {
+             return a;
+         }
+         
+         // Subtract n from a until a < n
+         std::vector<uint8_t> result = a;
+         while (compare(result, n) >= 0) {
+             result = subtract(result, n);
+         }
+         
+         return result;
+     }
+     
+     // Compare two big integers (a <=> b)
+     int compare(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+         if (a.size() < b.size()) return -1;
+         if (a.size() > b.size()) return 1;
+         
+         for (int i = a.size() - 1; i >= 0; --i) {
+             if (a[i] < b[i]) return -1;
+             if (a[i] > b[i]) return 1;
+         }
+         
+         return 0; // Equal
+     }
+     
+     // Subtract b from a
+     std::vector<uint8_t> subtract(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+         std::vector<uint8_t> result(a.size(), 0);
+         int borrow = 0;
+         
+         for (size_t i = 0; i < a.size(); ++i) {
+             int aValue = a[i];
+             int bValue = (i < b.size()) ? b[i] : 0;
+             int diff = aValue - bValue - borrow;
+             
+             if (diff < 0) {
+                 diff += 256;
+                 borrow = 1;
+             } else {
+                 borrow = 0;
+             }
+             
+             result[i] = diff;
+         }
+         
+         // Remove leading zeros
+         while (result.size() > 1 && result.back() == 0) {
+             result.pop_back();
+         }
+         
+         return result;
+     }
+     
+     // SHA-256 hash function
+     std::vector<uint8_t> sha256(const std::vector<uint8_t>& data) {
+         // In a real application, this would call a proper SHA-256 implementation
+         // For this example, we'll create a simplified hash
+         std::vector<uint8_t> hash(32, 0); // 256 bits = 32 bytes
+         
+         // XOR-based simple hash (NOT SECURE! Just for demonstration)
+         for (size_t i = 0; i < data.size(); ++i) {
+             hash[i % 32] ^= data[i];
+             // Perform a simple rotation
+             uint8_t temp = hash[0];
+             for (int j = 0; j < 31; ++j) {
+                 hash[j] = hash[j+1];
+             }
+             hash[31] = temp;
+         }
+         
+         return hash;
+     }
+     
+     // Initialize the prime and generator
+     void initPrimeAndGenerator() {
+         // RFC 3526 MODP Group 14 (2048 bits)
+         // In a real implementation, you would hard-code the prime or use a standard library
+         std::string primeHex = 
+             "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1"
+             "29024E088A67CC74020BBEA63B139B22514A08798E3404DD"
+             "EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245"
+             "E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED"
+             "EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3D"
+             "C2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F"
+             "83655D23DCA3AD961C62F356208552BB9ED529077096966D"
+             "670C354E4ABC9804F1746C08CA18217C32905E462E36CE3B"
+             "E39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9"
+             "DE2BCBF6955817183995497CEA956AE515D2261898FA0510"
+             "15728E5A8AACAA68FFFFFFFFFFFFFFFF";
+         
+         p = hex2bin(primeHex);
+         g = {2}; // Generator is 2
+     }
+     
+ public:
+     DHKeyExchange() {
+         initPrimeAndGenerator();
+     }
+     
+     // Reset for a new key exchange
+     void reset() {
+         // Generate new private key (a)
+         privateKey = secureRandom.getRandomBytes(DH_KEY_SIZE / 8);
+         
+         // Calculate public key (g^a mod p)
+         publicKey = modExp(g, privateKey, p);
+         
+         // Calculate hash of public key for commitment
+         publicKeyHash = sha256(publicKey);
+         
+         // Clear peer public key and shared secret
+         peerPublicKey.clear();
+         sharedSecret.clear();
+     }
+     
+     // Get our public key hash (for commitment)
+     std::vector<uint8_t> getPublicKeyHash() const {
+         return publicKeyHash;
+     }
+     
+     // Get our public key
+     std::vector<uint8_t> getPublicKey() const {
+         return publicKey;
+     }
+     
+     // Set peer's public key and compute shared secret
+     bool setPeerPublicKey(const std::vector<uint8_t>& key) {
+         peerPublicKey = key;
+         
+         // Calculate shared secret (g^b)^a mod p = g^(ab) mod p
+         try {
+             sharedSecret = modExp(peerPublicKey, privateKey, p);
+             return true;
+         } catch (const std::exception& e) {
+             std::cerr << "Error computing shared secret: " << e.what() << std::endl;
+             return false;
+         }
+     }
+     
+     // Verify the peer's public key against previously received hash
+     bool verifyPeerPublicKey(const std::vector<uint8_t>& key, const std::vector<uint8_t>& hash) {
+         return sha256(key) == hash;
+     }
+     
+     // Get shared secret
+     std::vector<uint8_t> getSharedSecret() const {
+         return sharedSecret;
+     }
+     
+     // Convert shared secret to emoji visualization
+     std::vector<int> getEmojiVisualization() const {
+         // Use the shared secret to generate 4 emoji indices
+         // Each emoji index is in range 0-332 (total 333 different emojis)
+         std::vector<int> emojiIndices;
+         
+         if (sharedSecret.empty()) {
+             return emojiIndices;
+         }
+         
+         // Use the first 4 bytes of the shared secret hash to select emojis
+         std::vector<uint8_t> secretHash = sha256(sharedSecret);
+         
+         for (int i = 0; i < 4; i++) {
+             // Use 4 bytes from the hash (more entropy)
+             uint32_t value = 0;
+             for (int j = 0; j < 4; j++) {
+                 value = (value << 8) | secretHash[i*4 + j];
+             }
+             // Map to 0-332 range
+             emojiIndices.push_back(value % 333);
+         }
+         
+         return emojiIndices;
+     }
+ };
+ 
+ // ----------------
+ // PX ENCRYPTION
+ // ----------------
+ 
+ // PX Encryption implementation
+ class PXEncryption {
+ private:
+     std::vector<uint8_t> key;
+     std::vector<uint8_t> iv;
+     
+     // Simple XOR-based encryption (for demonstration - in real app would use AES-GCM or similar)
+     std::vector<uint8_t> xorEncrypt(const std::vector<uint8_t>& data) {
+         if (key.empty()) {
+             throw std::runtime_error("Encryption key not set");
+         }
+         
+         std::vector<uint8_t> result = data;
+         for (size_t i = 0; i < data.size(); ++i) {
+             result[i] = data[i] ^ key[i % key.size()] ^ iv[(i + 1) % iv.size()];
+         }
+         
+         return result;
+     }
+     
+ public:
+     PXEncryption() {}
+     
+     // Initialize with key from DH key exchange and a random IV
+     void init(const std::vector<uint8_t>& dhKey) {
+         // Use the first 32 bytes of the DH shared secret as our key
+         // In a real application, you would derive proper encryption keys using HKDF
+         key = dhKey;
+         if (key.size() > 32) {
+             key.resize(32);
+         }
+         
+         // Generate a random IV
+         iv = secureRandom.getRandomBytes(16);
+     }
+     
+     // Reset everything
+     void reset() {
+         key.clear();
+         iv.clear();
+     }
+     
+     // Encrypt data
+     std::vector<uint8_t> encrypt(const std::vector<uint8_t>& plaintext) {
+         // In a real application, this would be AES-GCM or similar
+         // For this example, we use simple XOR with the key and IV
+         return xorEncrypt(plaintext);
+     }
+     
+     // Decrypt data
+     std::vector<uint8_t> decrypt(const std::vector<uint8_t>& ciphertext) {
+         // XOR is symmetric, so encryption and decryption are the same
+         return xorEncrypt(ciphertext);
+     }
+     
+     // Get the current IV (for packet headers)
+     std::vector<uint8_t> getIV() const {
+         return iv;
+     }
+ };
+ 
+ // ----------------
+ // NETWORK HANDLER
+ // ----------------
+ 
+ // Network communication handler
+ class NetworkHandler : public QObject {
+     Q_OBJECT
+     
+ private:
+     int sock;
+     std::string serverAddress;
+     int serverPort;
+     std::string turnAddress;
+     int turnPort;
+     
+     uint32_t clientId;
+     std::string username;
+     bool registered;
+     
+     QTimer* heartbeatTimer;
+     QTimer* timeoutTimer;
+     
+     std::thread networkThread;
+     std::atomic<bool> running;
+     std::mutex sendMutex;
+     
+     // Connection to TURN server
+     int turnSock;
+     sockaddr_in turnAddr;
+     bool turnConnected;
+     
+     // Sequence numbers for packets
+     uint32_t nextSeqNum;
+     
+     // Call state
+     CallState callState;
+     CallInfo currentCall;
+     std::map<uint32_t, UserInfo> knownUsers;
+     
+     // Encryption and key exchange
+     DHKeyExchange dhKeyExchange;
+     PXEncryption pxEncryption;
+     
+ public:
+     NetworkHandler(QObject* parent = nullptr) 
+         : QObject(parent), sock(-1), serverPort(DEFAULT_SERVER_PORT),
+           turnPort(DEFAULT_TURN_PORT), clientId(0), registered(false),
+           heartbeatTimer(nullptr), timeoutTimer(nullptr), running(false),
+           turnSock(-1), turnConnected(false), nextSeqNum(1),
+           callState(IDLE) {
+         
+         // Initialize timers
+         heartbeatTimer = new QTimer(this);
+         connect(heartbeatTimer, &QTimer::timeout, this, &NetworkHandler::sendHeartbeat);
+         
+         timeoutTimer = new QTimer(this);
+         connect(timeoutTimer, &QTimer::timeout, this, &NetworkHandler::handleCallTimeout);
+     }
+     
+     ~NetworkHandler() {
+         disconnect();
+     }
+     
+     // Connect to server
+     bool connect(const std::string& server, int port, const std::string& turn, int turnP) {
+         serverAddress = server;
+         serverPort = port;
+         turnAddress = turn;
+         turnPort = turnP;
+         
+         // Create UDP socket
+         sock = socket(AF_INET, SOCK_DGRAM, 0);
+         if (sock < 0) {
+             emit error("Failed to create socket");
+             return false;
+         }
+         
+         // Set socket to non-blocking
+         int flags = fcntl(sock, F_GETFL, 0);
+         fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+         
+         // Start network thread
+         running = true;
+         networkThread = std::thread(&NetworkHandler::networkLoop, this);
+         
+         return true;
+     }
+     
+     // Disconnect from server
+     void disconnect() {
+         // Stop timers
+         heartbeatTimer->stop();
+         timeoutTimer->stop();
+         
+         // Stop network thread
+         running = false;
+         if (networkThread.joinable()) {
+             networkThread.join();
+         }
+         
+         // Close sockets
+         if (sock >= 0) {
+             close(sock);
+             sock = -1;
+         }
+         
+         if (turnSock >= 0) {
+             close(turnSock);
+             turnSock = -1;
+         }
+         
+         // Reset state
+         registered = false;
+         turnConnected = false;
+         callState = IDLE;
+         nextSeqNum = 1;
+     }
+     
+     // Register with server
+     bool registerWithServer(const std::string& user) {
+         if (sock < 0) {
+             emit error("Not connected to server");
+             return false;
+         }
+         
+         username = user;
+         
+         // Create REGISTER packet
+         size_t packetSize = sizeof(PacketHeader) + username.size();
+         std::vector<char> packet(packetSize);
+         
+         PacketHeader header = {
+             .version = PROTOCOL_VERSION,
+             .type = REGISTER,
+             .length = static_cast<uint16_t>(packetSize),
+             .sender_id = 0, // Will be assigned by server
+             .receiver_id = 0, // Server
+             .call_id = 0,
+             .seq_num = nextSeqNum++,
+             .timestamp = static_cast<uint32_t>(std::chrono::system_clock::now().time_since_epoch().count() / 1000000)
+         };
+         
+         memcpy(packet.data(), &header, sizeof(PacketHeader));
+         memcpy(packet.data() + sizeof(PacketHeader), username.c_str(), username.size());
+         
+         // Send registration packet
+         return sendPacket(packet.data(), packet.size());
+     }
+     
+     // Request user list
+     bool requestUserList() {
+         if (!registered) {
+             emit error("Not registered with server");
+             return false;
+         }
+         
+         // Create USER_DISCOVERY packet
+         PacketHeader header = {
+             .version = PROTOCOL_VERSION,
+             .type = USER_DISCOVERY,
+             .length = sizeof(PacketHeader),
+             .sender_id = clientId,
+             .receiver_id = 0, // Server
+             .call_id = 0,
+             .seq_num = nextSeqNum++,
+             .timestamp = static_cast<uint32_t>(std::chrono::system_clock::now().time_since_epoch().count() / 1000000)
+         };
+         
+         return sendPacket(reinterpret_cast<char*>(&header), sizeof(header));
+     }
+     
+     // Start a call to a user
+     bool startCall(uint32_t userId, bool video, bool screenSharing) {
+         if (!registered || clientId == 0) {
+             emit error("Not registered with server");
+             return false;
+         }
+         
+         if (callState != IDLE) {
+             emit error("Already in a call");
+             return false;
+         }
+         
+         if (knownUsers.find(userId) == knownUsers.end()) {
+             emit error("Unknown user ID");
+             return false;
+         }
+         
+         // Initialize key exchange
+         dhKeyExchange.reset();
+         
+         // Create CALL_REQUEST packet with public key hash commitment
+         std::vector<uint8_t> publicKeyHash = dhKeyExchange.getPublicKeyHash();
+         
+         size_t packetSize = sizeof(PacketHeader) + publicKeyHash.size() + 1;
+         std::vector<char> packet(packetSize);
+         
+         PacketHeader header = {
+             .version = PROTOCOL_VERSION,
+             .type = CALL_REQUEST,
+             .length = static_cast<uint16_t>(packetSize),
+             .sender_id = clientId,
+             .receiver_id = userId,
+             .call_id = 0, // Will be assigned by server
+             .seq_num = nextSeqNum++,
+             .timestamp = static_cast<uint32_t>(std::chrono::system_clock::now().time_since_epoch().count() / 1000000)
+         };
+         
+         memcpy(packet.data(), &header, sizeof(PacketHeader));
+         
+         // Add call options (video/screen sharing flags)
+         uint8_t options = 0;
+         if (video) options |= 0x01;
+         if (screenSharing) options |= 0x02;
+         packet[sizeof(PacketHeader)] = options;
+         
+         // Add public key hash (commitment)
+         memcpy(packet.data() + sizeof(PacketHeader) + 1, publicKeyHash.data(), publicKeyHash.size());
+         
+         // Update call state
+         callState = OUTGOING_CALL;
+         currentCall.peer_id = userId;
+         currentCall.peer_username = knownUsers[userId].username;
+         currentCall.is_video = video;
+         currentCall.is_screen_sharing = screenSharing;
+         currentCall.is_p2p = false;
+         currentCall.local_seq_num = 0;
+         currentCall.remote_seq_num = 0;
+         
+         // Start timeout timer
+         timeoutTimer->start(CALL_TIMEOUT);
+         
+         // Send call request
+         return sendPacket(packet.data(), packet.size());
+     }
+     
+     // Accept an incoming call
+     bool acceptCall(bool video, bool screenSharing) {
+         if (callState != INCOMING_CALL) {
+             emit error("No incoming call to accept");
+             return false;
+         }
+         
+         // Generate and send our public key (step 2 of 3-way DH exchange)
+         std::vector<uint8_t> publicKey = dhKeyExchange.getPublicKey();
+         
+         size_t packetSize = sizeof(PacketHeader) + publicKey.size() + 1;
+         std::vector<char> packet(packetSize);
+         
+         PacketHeader header = {
+             .version = PROTOCOL_VERSION,
+             .type = CALL_ACCEPT,
+             .length = static_cast<uint16_t>(packetSize),
+             .sender_id = clientId,
+             .receiver_id = currentCall.peer_id,
+             .call_id = currentCall.call_id,
+             .seq_num = nextSeqNum++,
+             .timestamp = static_cast<uint32_t>(std::chrono::system_clock::now().time_since_epoch().count() / 1000000)
+         };
+         
+         memcpy(packet.data(), &header, sizeof(PacketHeader));
+         
+         // Add call options
+         uint8_t options = 0;
+         if (video) options |= 0x01;
+         if (screenSharing) options |= 0x02;
+         packet[sizeof(PacketHeader)] = options;
+         
+         // Add public key
+         memcpy(packet.data() + sizeof(PacketHeader) + 1, publicKey.data(), publicKey.size());
+         
+         // Update call info
+         currentCall.is_video = video;
+         currentCall.is_screen_sharing = screenSharing;
+         
+         // Start P2P negotiation
+         callState = P2P_NEGOTIATING;
+         
+         // Stop timeout timer
+         timeoutTimer->stop();
+         
+         // Start call timer
+         currentCall.start_time = std::chrono::steady_clock::now();
+         
+         // Send acceptance
+         return sendPacket(packet.data(), packet.size());
+     }
+     
+     // Reject an incoming call
+     bool rejectCall() {
+         if (callState != INCOMING_CALL) {
+             emit error("No incoming call to reject");
+             return false;
+         }
+         
+         // Create CALL_REJECT packet
+         PacketHeader header = {
+             .version = PROTOCOL_VERSION,
+             .type = CALL_REJECT,
+             .length = sizeof(PacketHeader),
+             .sender_id = clientId,
+             .receiver_id = currentCall.peer_id,
+             .call_id = currentCall.call_id,
+             .seq_num = nextSeqNum++,
+             .timestamp = static_cast<uint32_t>(std::chrono::system_clock::now().time_since_epoch().count() / 1000000)
+         };
+         
+         // Reset call state
+         callState = IDLE;
+         
+         // Stop timeout timer
+         timeoutTimer->stop();
+         
+         // Send rejection
+         return sendPacket(reinterpret_cast<char*>(&header), sizeof(header));
+     }
+     
+     // End current call
+     bool endCall() {
+         if (callState == IDLE) {
+             return true; // No call to end
+         }
+         
+         // Create CALL_END packet
+         PacketHeader header = {
+             .version = PROTOCOL_VERSION,
+             .type = CALL_END,
+             .length = sizeof(PacketHeader),
+             .sender_id = clientId,
+             .receiver_id = currentCall.peer_id,
+             .call_id = currentCall.call_id,
+             .seq_num = nextSeqNum++,
+             .timestamp = static_cast<uint32_t>(std::chrono::system_clock::now().time_since_epoch().count() / 1000000)
+         };
+         
+         // Reset call state and encryption
+         callState = IDLE;
+         pxEncryption.reset();
+         
+         // Stop timers
+         timeoutTimer->stop();
+         
+         // Send call end
+         return sendPacket(reinterpret_cast<char*>(&header), sizeof(header));
+     }
+     
+     // Send encrypted media data
+     bool sendMediaData(MediaType type, const std::vector<uint8_t>& data) {
+         if (callState != CALL_IN_PROGRESS) {
+             return false;
+         }
+         
+         // Encrypt the media data
+         std::vector<uint8_t> encrypted = pxEncryption.encrypt(data);
+         
+         // Create packet header
+         size_t packetSize = sizeof(PacketHeader) + 1 + encrypted.size(); // +1 for media type
+         std::vector<char> packet(packetSize);
+         
+         PacketHeader header = {
+             .version = PROTOCOL_VERSION,
+             .type = RELAY_DATA,
+             .length = static_cast<uint16_t>(packetSize),
+             .sender_id = clientId,
+             .receiver_id = currentCall.peer_id,
+             .call_id = currentCall.call_id,
+             .seq_num = currentCall.local_seq_num++,
+             .timestamp = static_cast<uint32_t>(std::chrono::system_clock::now().time_since_epoch().count() / 1000000)
+         };
+         
+         memcpy(packet.data(), &header, sizeof(PacketHeader));
+         
+         // Add media type
+         packet[sizeof(PacketHeader)] = static_cast<char>(type);
+         
+         // Add encrypted data
+         memcpy(packet.data() + sizeof(PacketHeader) + 1, encrypted.data(), encrypted.size());
+         
+         // Send packet
+         return sendPacket(packet.data(), packet.size());
+     }
+     
+     // Try to establish P2P connection
+     bool tryP2PConnection() {
+         if (callState != P2P_NEGOTIATING && callState != CALL_IN_PROGRESS) {
+             return false;
+         }
+         
+         // In a real application, this would collect local network information
+         // and send it to the peer for connection attempts
+         
+         // Create P2P_ATTEMPT packet
+         PacketHeader header = {
+             .version = PROTOCOL_VERSION,
+             .type = P2P_ATTEMPT,
+             .length = sizeof(PacketHeader),
+             .sender_id = clientId,
+             .receiver_id = currentCall.peer_id,
+             .call_id = currentCall.call_id,
+             .seq_num = nextSeqNum++,
+             .timestamp = static_cast<uint32_t>(std::chrono::system_clock::now().time_since_epoch().count() / 1000000)
+         };
+         
+         // Send packet
+         return sendPacket(reinterpret_cast<char*>(&header), sizeof(header));
+     }
+     
+     // Complete the key exchange (send our public key)
+     bool completeKeyExchange() {
+         if (callState != P2P_NEGOTIATING) {
+             return false;
+         }
+         
+         // Get our public key (step 3 of 3-way DH exchange)
+         std::vector<uint8_t> publicKey = dhKeyExchange.getPublicKey();
+         
+         // Create packet with our public key
+         size_t packetSize = sizeof(PacketHeader) + publicKey.size();
+         std::vector<char> packet(packetSize);
+         
+         PacketHeader header = {
+             .version = PROTOCOL_VERSION,
+             .type = P2P_SUCCESS,
+             .length = static_cast<uint16_t>(packetSize),
+             .sender_id = clientId,
+             .receiver_id = currentCall.peer_id,
+             .call_id = currentCall.call_id,
+             .seq_num = nextSeqNum++,
+             .timestamp = static_cast<uint32_t>(std::chrono::system_clock::now().time_since_epoch().count() / 1000000)
+         };
+         
+         memcpy(packet.data(), &header, sizeof(PacketHeader));
+         memcpy(packet.data() + sizeof(PacketHeader), publicKey.data(), publicKey.size());
+         
+         // Initialize encryption with the shared secret
+         std::vector<uint8_t> sharedSecret = dhKeyExchange.getSharedSecret();
+         pxEncryption.init(sharedSecret);
+         
+         // Update call state
+         callState = CALL_IN_PROGRESS;
+         
+         // Send packet
+         return sendPacket(packet.data(), packet.size());
+     }
+     
+     // Get list of known users
+     std::map<uint32_t, UserInfo> getUsers() const {
+         return knownUsers;
+     }
+     
+     // Get current call information
+     CallInfo getCurrentCall() const {
+         return currentCall;
+     }
+     
+     // Get current call state
+     CallState getCallState() const {
+         return callState;
+     }
+     
+     // Get emoji verification code
+     std::vector<int> getEmojiVerification() const {
+         return dhKeyExchange.getEmojiVisualization();
+     }
+     
+ signals:
+     void registered(uint32_t client_id);
+     void error(const QString& message);
+     void userListReceived();
+     void incomingCall(uint32_t caller_id, const QString& caller_name);
+     void callAccepted();
+     void callRejected();
+     void callEnded();
+     void p2pEstablished();
+     void mediaReceived(int type, const QByteArray& data);
+     void keyExchangeCompleted();
+     
+ private slots:
+     // Send heartbeat to server
+     void sendHeartbeat() {
+         if (!registered) {
+             return;
+         }
+         
+         // Create HEARTBEAT packet
+         PacketHeader header = {
+             .version = PROTOCOL_VERSION,
+             .type = HEARTBEAT,
+             .length = sizeof(PacketHeader),
+             .sender_id = clientId,
+             .receiver_id = 0, // Server
+             .call_id = 0,
+             .seq_num = nextSeqNum++,
+             .timestamp = static_cast<uint32_t>(std::chrono::system_clock::now().time_since_epoch().count() / 1000000)
+         };
+         
+         sendPacket(reinterpret_cast<char*>(&header), sizeof(header));
+     }
+     
+     // Handle call timeout
+     void handleCallTimeout() {
+         if (callState == OUTGOING_CALL || callState == INCOMING_CALL) {
+             // Call timed out
+             emit error("Call timed out");
+             callState = IDLE;
+             timeoutTimer->stop();
+         }
+     }
+     
+ private:
+     // Network thread loop
+     void networkLoop() {
+         char buffer[MAX_BUFFER_SIZE];
+         struct sockaddr_in sender_addr;
+         socklen_t sender_len = sizeof(sender_addr);
+         
+         struct pollfd fds[1];
+         fds[0].fd = sock;
+         fds[0].events = POLLIN;
+         
+         while (running) {
+             int ret = poll(fds, 1, 100); // Poll with 100ms timeout
+             
+             if (ret < 0) {
+                 // Error in poll
+                 std::cerr << "Poll error" << std::endl;
+                 break;
+             }
+             
+             if (ret == 0) {
+                 // Timeout - no data
+                 continue;
+             }
+             
+             if (fds[0].revents & POLLIN) {
+                 // Data available
+                 ssize_t received = recvfrom(sock, buffer, MAX_BUFFER_SIZE, 0,
+                                            (struct sockaddr*)&sender_addr, &sender_len);
+                 
+                 if (received > 0) {
+                     processIncomingPacket(buffer, received);
+                 }
+             }
+         }
+     }
+     
+     // Send packet to server
+     bool sendPacket(const char* data, size_t size) {
+         if (sock < 0) {
+             return false;
+         }
+         
+         // Create server address
+         struct sockaddr_in server_addr;
+         memset(&server_addr, 0, sizeof(server_addr));
+         server_addr.sin_family = AF_INET;
+         server_addr.sin_port = htons(serverPort);
+         
+         if (inet_pton(AF_INET, serverAddress.c_str(), &server_addr.sin_addr) <= 0) {
+             emit error("Invalid server address");
+             return false;
+         }
+         
+         // Lock to prevent multiple threads from sending simultaneously
+         std::lock_guard<std::mutex> lock(sendMutex);
+         
+         // Send packet
+         ssize_t sent = sendto(sock, data, size, 0,
+                              (struct sockaddr*)&server_addr, sizeof(server_addr));
+         
+         return sent == size;
+     }
+     
+     // Process an incoming packet
+     void processIncomingPacket(const char* buffer, size_t size) {
+         if (size < sizeof(PacketHeader)) {
+             return;
+         }
+         
+         // Parse header
+         PacketHeader header;
+         memcpy(&header, buffer, sizeof(PacketHeader));
+         
+         // Validate header
+         if (header.version != PROTOCOL_VERSION || header.length > size) {
+             return;
+         }
+         
+         // Process packet based on type
+         switch (header.type) {
+             case REGISTER_ACK:
+                 processRegisterAck(buffer, size);
+                 break;
+                 
+             case USER_LIST:
+                 processUserList(buffer, size);
+                 break;
+                 
+             case CALL_REQUEST:
+                 processCallRequest(buffer, size);
+                 break;
+                 
+             case CALL_ACCEPT:
+                 processCallAccept(buffer, size);
+                 break;
+                 
+             case CALL_REJECT:
+                 processCallReject(buffer, size);
+                 break;
+                 
+             case CALL_END:
+                 processCallEnd(buffer, size);
+                 break;
+                 
+             case P2P_ATTEMPT:
+                 processP2PAttempt(buffer, size);
+                 break;
+                 
+             case P2P_SUCCESS:
+                 processP2PSuccess(buffer, size);
+                 break;
+                 
+             case P2P_FAILURE:
+                 processP2PFailure(buffer, size);
+                 break;
+                 
+             case RELAY_DATA:
+                 processRelayData(buffer, size);
+                 break;
+                 
+             case HEARTBEAT_ACK:
+                 // Nothing to do for heartbeat acknowledgment
+                 break;
+                 
+             case ERROR:
+                 processError(buffer, size);
+                 break;
+                 
+             default:
+                 std::cerr << "Unknown packet type: " << static_cast<int>(header.type) << std::endl;
+                 break;
+         }
+     }
+     
+     // Process REGISTER_ACK
+     void processRegisterAck(const char* buffer, size_t size) {
+         if (size < sizeof(PacketHeader) + sizeof(uint32_t)) {
+             return;
+         }
+         
+         // Extract client ID
+         uint32_t id;
+         memcpy(&id, buffer + sizeof(PacketHeader), sizeof(uint32_t));
+         
+         // Update state
+         clientId = id;
+         registered = true;
+         
+         // Start heartbeat timer
+         heartbeatTimer->start(HEARTBEAT_INTERVAL * 1000);
+         
+         // Request user list
+         requestUserList();
+         
+         // Notify UI
+         emit registered(clientId);
+     }
+     
+     // Process USER_LIST
+     void processUserList(const char* buffer, size_t size) {
+         if (size <= sizeof(PacketHeader)) {
+             return;
+         }
+         
+         // Extract user list
+         std::string userListStr(buffer + sizeof(PacketHeader), size - sizeof(PacketHeader));
+         
+         // Parse user list (format: "username:id;username:id;...")
+         knownUsers.clear();
+         
+         std::istringstream iss(userListStr);
+         std::string entry;
+         while (std::getline(iss, entry, ';')) {
+             size_t colonPos = entry.find(':');
+             if (colonPos != std::string::npos) {
+                 std::string name = entry.substr(0, colonPos);
+                 uint32_t id = std::stoul(entry.substr(colonPos + 1));
+                 
+                 UserInfo info;
+                 info.user_id = id;
+                 info.username = name;
+                 knownUsers[id] = info;
+             }
+         }
+         
+         // Notify UI
+         emit userListReceived();
+     }
+     
+     // Process CALL_REQUEST
+     void processCallRequest(const char* buffer, size_t size) {
+         if (size < sizeof(PacketHeader) + 1) {
+             return;
+         }
+         
+         PacketHeader* header = (PacketHeader*)buffer;
+         
+         // Reject call if already in a call
+         if (callState != IDLE) {
+             // Send rejection
+             PacketHeader rejectHeader = {
+                 .version = PROTOCOL_VERSION,
+                 .type = CALL_REJECT,
+                 .length = sizeof(PacketHeader),
+                 .sender_id = clientId,
+                 .receiver_id = header->sender_id,
+                 .call_id = header->call_id,
+                 .seq_num = nextSeqNum++,
+                 .timestamp = static_cast<uint32_t>(std::chrono::system_clock::now().time_since_epoch().count() / 1000000)
+             };
+             
+             sendPacket(reinterpret_cast<char*>(&rejectHeader), sizeof(rejectHeader));
+             return;
+         }
+         
+         // Parse call options
+         uint8_t options = buffer[sizeof(PacketHeader)];
+         bool isVideo = (options & 0x01) != 0;
+         bool isScreenSharing = (options & 0x02) != 0;
+         
+         // Extract caller's public key hash (for validation later)
+         size_t hashSize = size - sizeof(PacketHeader) - 1;
+         std::vector<uint8_t> peerPublicKeyHash(hashSize);
+         memcpy(peerPublicKeyHash.data(), buffer + sizeof(PacketHeader) + 1, hashSize);
+         
+         // Initialize key exchange
+         dhKeyExchange.reset();
+         
+         // Update call state
+         callState = INCOMING_CALL;
+         currentCall.call_id = header->call_id;
+         currentCall.peer_id = header->sender_id;
+         currentCall.peer_username = knownUsers[header->sender_id].username;
+         currentCall.is_video = isVideo;
+         currentCall.is_screen_sharing = isScreenSharing;
+         currentCall.is_p2p = false;
+         
+         // Start timeout timer
+         timeoutTimer->start(CALL_TIMEOUT);
+         
+         // Notify UI
+         emit incomingCall(header->sender_id, QString::fromStdString(currentCall.peer_username));
+     }
+     
+     // Process CALL_ACCEPT
+     void processCallAccept(const char* buffer, size_t size) {
+         if (size < sizeof(PacketHeader) + 1 || callState != OUTGOING_CALL) {
+             return;
+         }
+         
+         PacketHeader* header = (PacketHeader*)buffer;
+         
+         // Parse call options
+         uint8_t options = buffer[sizeof(PacketHeader)];
+         bool isVideo = (options & 0x01) != 0;
+         bool isScreenSharing = (options & 0x02) != 0;
+         
+         // Extract peer's public key
+         size_t keySize = size - sizeof(PacketHeader) - 1;
+         std::vector<uint8_t> peerPublicKey(keySize);
+         memcpy(peerPublicKey.data(), buffer + sizeof(PacketHeader) + 1, keySize);
+         
+         // Set peer's public key in our DH exchange
+         dhKeyExchange.setPeerPublicKey(peerPublicKey);
+         
+         // Update call state
+         callState = P2P_NEGOTIATING;
+         currentCall.call_id = header->call_id;
+         currentCall.is_video = isVideo;
+         currentCall.is_screen_sharing = isScreenSharing;
+         currentCall.start_time = std::chrono::steady_clock::now();
+         
+         // Stop timeout timer
+         timeoutTimer->stop();
+         
+         // Send our public key to complete the exchange
+         completeKeyExchange();
+         
+         // Start P2P negotiation
+         tryP2PConnection();
+         
+         // Notify UI
+         emit callAccepted();
+     }
+     
+     // Process CALL_REJECT
+     void processCallReject(const char* buffer, size_t size) {
+         if (callState != OUTGOING_CALL) {
+             return;
+         }
+         
+         // Reset call state
+         callState = IDLE;
+         
+         // Stop timeout timer
+         timeoutTimer->stop();
+         
+         // Notify UI
+         emit callRejected();
+     }
+     
+     // Process CALL_END
+     void processCallEnd(const char* buffer, size_t size) {
+         if (callState == IDLE) {
+             return;
+         }
+         
+         PacketHeader* header = (PacketHeader*)buffer;
+         
+         // Only accept CALL_END for current call
+         if (header->call_id != currentCall.call_id) {
+             return;
+         }
+         
+         // Reset call state and encryption
+         callState = IDLE;
+         pxEncryption.reset();
+         
+         // Stop timers
+         timeoutTimer->stop();
+         
+         // Notify UI
+         emit callEnded();
+     }
+     
+     // Process P2P_ATTEMPT
+     void processP2PAttempt(const char* buffer, size_t size) {
+         if (callState != P2P_NEGOTIATING && callState != CALL_IN_PROGRESS) {
+             return;
+         }
+         
+         // In a real application, this would contain connection information
+         // and would attempt to establish a direct P2P connection
+         
+         // For now, just acknowledge that relay mode will be used
+         PacketHeader header = {
+             .version = PROTOCOL_VERSION,
+             .type = P2P_FAILURE,
+             .length = sizeof(PacketHeader),
+             .sender_id = clientId,
+             .receiver_id = currentCall.peer_id,
+             .call_id = currentCall.call_id,
+             .seq_num = nextSeqNum++,
+             .timestamp = static_cast<uint32_t>(std::chrono::system_clock::now().time_since_epoch().count() / 1000000)
+         };
+         
+         sendPacket(reinterpret_cast<char*>(&header), sizeof(header));
+     }
+     
+     // Process P2P_SUCCESS
+     void processP2PSuccess(const char* buffer, size_t size) {
+         if (callState != P2P_NEGOTIATING) {
+             return;
+         }
+         
+         PacketHeader* header = (PacketHeader*)buffer;
+         
+         // Extract peer's public key
+         size_t keySize = size - sizeof(PacketHeader);
+         std::vector<uint8_t> peerPublicKey(keySize);
+         memcpy(peerPublicKey.data(), buffer + sizeof(PacketHeader), keySize);
+         
+         // Verify and set peer's public key
+         if (!dhKeyExchange.setPeerPublicKey(peerPublicKey)) {
+             emit error("Failed to compute shared secret");
+             endCall();
+             return;
+         }
+         
+         // Initialize encryption with the shared secret
+         std::vector<uint8_t> sharedSecret = dhKeyExchange.getSharedSecret();
+         pxEncryption.init(sharedSecret);
+         
+         // Update call state
+         callState = CALL_IN_PROGRESS;
+         currentCall.is_p2p = false; // Using relay for now
+         
+         // Notify UI of encryption establishment
+         emit keyExchangeCompleted();
+         
+         // Notify UI of call establishment
+         emit p2pEstablished();
+     }
+     
+     // Process P2P_FAILURE
+     void processP2PFailure(const char* buffer, size_t size) {
+         if (callState != P2P_NEGOTIATING && callState != CALL_IN_PROGRESS) {
+             return;
+         }
+         
+         // Update call state to use relay
+         callState = CALL_IN_PROGRESS;
+         currentCall.is_p2p = false;
+         
+         // Notify UI
+         emit p2pEstablished();
+     }
+     
+     // Process RELAY_DATA
+     void processRelayData(const char* buffer, size_t size) {
+         if (callState != CALL_IN_PROGRESS || size <= sizeof(PacketHeader) + 1) {
+             return;
+         }
+         
+         PacketHeader* header = (PacketHeader*)buffer;
+         
+         // Check if packet is for current call
+         if (header->call_id != currentCall.call_id) {
+             return;
+         }
+         
+         // Get media type
+         MediaType mediaType = static_cast<MediaType>(buffer[sizeof(PacketHeader)]);
+         
+         // Get encrypted data
+         size_t dataSize = size - sizeof(PacketHeader) - 1;
+         std::vector<uint8_t> encryptedData(dataSize);
+         memcpy(encryptedData.data(), buffer + sizeof(PacketHeader) + 1, dataSize);
+         
+         // Decrypt data
+         std::vector<uint8_t> decryptedData = pxEncryption.decrypt(encryptedData);
+         
+         // Convert to QByteArray for signal
+         QByteArray data(reinterpret_cast<const char*>(decryptedData.data()), decryptedData.size());
+         
+         // Emit signal with decrypted data
+         emit mediaReceived(static_cast<int>(mediaType), data);
+     }
+     
+     // Process ERROR
+     void processError(const char* buffer, size_t size) {
+         if (size <= sizeof(PacketHeader)) {
+             return;
+         }
+         
+         // Extract error message
+         std::string errorMsg(buffer + sizeof(PacketHeader), size - sizeof(PacketHeader));
+         
+         // Notify UI
+         emit error(QString::fromStdString(errorMsg));
+     }
+ };
+ 
+ // ----------------
+ // EMOJI VISUALIZATION
+ // ----------------
+ 
+ // Emoji representation for key verification
+ class EmojiVisualizer : public QWidget {
+     Q_OBJECT
+     
+ private:
+     std::vector<int> emojiIndices;
+     QStringList emojiList;
+     
+ public:
+     EmojiVisualizer(QWidget* parent = nullptr) : QWidget(parent) {
+         initEmojis();
+     }
+     
+     void setEmojiIndices(const std::vector<int>& indices) {
+         emojiIndices = indices;
+         update();
+     }
+     
+     QSize sizeHint() const override {
+         return QSize(400, 100);
+     }
+     
+ protected:
+     void paintEvent(QPaintEvent* event) override {
+         Q_UNUSED(event);
+         
+         QPainter painter(this);
+         painter.setRenderHint(QPainter::Antialiasing);
+         
+         // Background
+         painter.fillRect(rect(), QColor(240, 240, 240));
+         
+         // Draw emojis
+         if (emojiIndices.empty()) {
+             painter.drawText(rect(), Qt::AlignCenter, "Waiting for key exchange...");
+             return;
+         }
+         
+         int emojiWidth = width() / emojiIndices.size();
+         int emojiHeight = height();
+         
+         for (size_t i = 0; i < emojiIndices.size(); ++i) {
+             int index = emojiIndices[i];
+             if (index >= 0 && index < emojiList.size()) {
+                 QRect emojiRect(i * emojiWidth, 0, emojiWidth, emojiHeight);
+                 painter.drawText(emojiRect, Qt::AlignCenter, emojiList[index]);
+                 
+                 // Draw emoji name below
+                 QFont nameFont = painter.font();
+                 nameFont.setPointSize(8);
+                 painter.setFont(nameFont);
+                 QRect nameRect(i * emojiWidth, emojiHeight - 20, emojiWidth, 20);
+                 painter.drawText(nameRect, Qt::AlignCenter, getEmojiName(index));
+                 
+                 // Reset font
+                 nameFont.setPointSize(12);
+                 painter.setFont(nameFont);
+             }
+         }
+     }
+     
+ private:
+     void initEmojis() {
+         // This is a subset of emojis (ideally would have 333 distinct ones)
+         emojiList << "😀" << "😁" << "😂" << "🤣" << "😃" << "😄" << "😅" << "😆"
+                   << "😉" << "😊" << "😋" << "😎" << "😍" << "😘" << "😗" << "😙"
+                   << "😚" << "🙂" << "🤗" << "🤔" << "😐" << "😑" << "😶" << "🙄"
+                   << "😏" << "😣" << "😥" << "😮" << "🤐" << "😯" << "😪" << "😫"
+                   << "😴" << "😌" << "🤓" << "😛" << "😜" << "😝" << "🤤" << "😒"
+                   << "😓" << "😔" << "😕" << "🙃" << "🤑" << "😲" << "☹️" << "🙁"
+                   << "😖" << "😞" << "😟" << "😤" << "😢" << "😭" << "😦" << "😧"
+                   << "😨" << "😩" << "😬" << "😰" << "😱" << "😳" << "😵" << "😡"
+                   << "😠" << "😷" << "🤒" << "🤕" << "🤢" << "🤧" << "😇" << "🤠"
+                   << "🤡" << "🤥" << "🤫" << "🤭" << "🧐" << "🤯" << "🤪" << "🤬"
+                   << "🧡" << "💛" << "💚" << "💙" << "💜" << "🖤" << "💔" << "❤️"
+                   << "💕" << "💞" << "💓" << "💗" << "💖" << "💘" << "💝" << "💟"
+                   << "☮️" << "✝️" << "☪️" << "🕉" << "☸️" << "✡️" << "🔯" << "🕎"
+                   << "☯️" << "☦️" << "🛐" << "⛎" << "♈️" << "♉️" << "♊️" << "♋️"
+                   << "♌️" << "♍️" << "♎️" << "♏️" << "♐️" << "♑️" << "♒️" << "♓️"
+                   << "🆔" << "⚛️" << "🉑" << "☢️" << "☣️" << "📴" << "📳" << "🈶"
+                   << "🈚️" << "🈸" << "🈺" << "🈷️" << "✴️" << "🆚" << "💮" << "🉐"
+                   << "㊙️" << "㊗️" << "🈴" << "🈵" << "🈹" << "🈲" << "🅰️" << "🅱️"
+                   << "🆎" << "🆑" << "🅾️" << "🆘" << "❌" << "⭕️" << "🛑" << "⛔️"
+                   << "📛" << "🚫" << "💯" << "💢" << "♨️" << "🚷" << "🚯" << "🚳"
+                   << "🚱" << "🔞" << "📵" << "🚭" << "❗️" << "❕" << "❓" << "❔"
+                   << "‼️" << "⁉️" << "🔅" << "🔆" << "〽️" << "⚠️" << "🚸" << "🔱"
+                   << "⚜️" << "🔰" << "♻️" << "✅" << "🈯️" << "💹" << "❇️" << "✳️"
+                   << "❎" << "🌐" << "💠" << "Ⓜ️" << "🌀" << "💤" << "🏧" << "🚾"
+                   << "♿️" << "🅿️" << "🈳" << "🈂️" << "🛂" << "🛃" << "🛄" << "🛅"
+                   << "🚹" << "🚺" << "🚼" << "🚻" << "🚮" << "🎦" << "📶" << "🈁"
+                   << "🔣" << "ℹ️" << "🔤" << "🔡" << "🔠" << "🆖" << "🆗" << "🆙"
+                   << "🆒" << "🆕" << "🆓" << "0️⃣" << "1️⃣" << "2️⃣" << "3️⃣" << "4️⃣"
+                   << "5️⃣" << "6️⃣" << "7️⃣" << "8️⃣" << "9️⃣" << "🔟" << "🔢" << "#️⃣"
+                   << "*️⃣" << "▶️" << "⏸" << "⏯" << "⏹" << "⏺" << "⏭" << "⏮"
+                   << "⏩" << "⏪" << "⏫" << "⏬" << "◀️" << "🔼" << "🔽" << "➡️"
+                   << "⬅️" << "⬆️" << "⬇️" << "↗️" << "↘️" << "↙️" << "↖️" << "↕️"
+                   << "↔️" << "↪️" << "↩️" << "⤴️" << "⤵️" << "🔀" << "🔁" << "🔂"
+                   << "🔄" << "🔃" << "🎵" << "🎶" << "➕" << "➖" << "➗" << "✖️"
+                   << "💲" << "💱" << "™️" << "©️" << "®️" << "〰️" << "➰" << "➿"
+                   << "🔚" << "🔙" << "🔛" << "🔝" << "🔜" << "✔️" << "☑️" << "🔘"
+                   << "⚪️" << "⚫️" << "🔴" << "🔵" << "🔺" << "🔻" << "🔸" << "🔹"
+                   << "🔶" << "🔷" << "🔳" << "🔲" << "▪️" << "▫️" << "◾️" << "◽️";
+     }
+     
+     QString getEmojiName(int index) {
+         // Simplified names for the emojis
+         static QStringList names = {
+             "Grinning", "Beaming", "Tears", "Rolling", "Smiley", "Happy", "Sweat", "Laughing",
+             "Wink", "Blushing", "Yum", "Cool", "Heart-eyes", "Kissing", "Kissing", "Kissing",
+             "Kissing", "Slight", "Hugging", "Thinking", "Neutral", "Expressionless", "No-mouth", "Rolling-eyes",
+             "Smirk", "Persevere", "Disappointed", "Open-mouth", "Zipper", "Hushed", "Sleepy", "Tired",
+             "Sleeping", "Relieved", "Nerd", "Tongue", "Wink-tongue", "Squint-tongue", "Drool", "Unamused",
+             "Downcast", "Pensive", "Confused", "Upside-down", "Money", "Astonished", "Frowning", "Slight-frown",
+             "Confounded", "Disappointed", "Worried", "Angry", "Crying", "Sobbing", "Anguished", "Fearful",
+             "Grimacing", "Anxious", "Scared", "Flushed", "Dizzy", "Pouting",
+             "Angry", "Mask", "Sick", "Hurt", "Nauseated", "Sneezing", "Angel", "Cowboy",
+             "Clown", "Lying", "Shushing", "Hand-over-mouth", "Monocle", "Exploding", "Wild", "Swearing",
+             "Orange-heart", "Yellow-heart", "Green-heart", "Blue-heart", "Purple-heart", "Black-heart", "Broken-heart", "Red-heart",
+             "Two-hearts", "Heart-ribbon", "Beating-heart", "Growing-heart", "Sparkling-heart", "Heart-arrow", "Heart-ribbon", "Heart-circle",
+             "Peace", "Cross", "Star-crescent", "Om", "Wheel", "Star-david", "Star-of-david", "Menorah",
+             "Yin-yang", "Cross", "Place-worship", "Ophiuchus", "Aries", "Taurus", "Gemini", "Cancer",
+             "Leo", "Virgo", "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces",
+             "ID-button", "Atom", "Accept", "Radioactive", "Biohazard", "Mobile-off", "Vibration", "Not-free",
+             "Free", "Application", "Open-business", "Monthly", "Circled-star", "VS-button", "White-flower", "Bargain",
+             "Secret", "Congratulations", "Passing", "Full", "Discount", "Prohibited", "A-button", "B-button",
+             "AB-button", "CL-button", "O-button", "SOS", "Cross-mark", "Circle", "Stop", "No-entry",
+             "Name-badge", "Prohibited", "Hundred", "Anger", "Hot-springs", "No-pedestrians", "No-littering", "No-bicycles",
+             "No-water", "No-under-18", "No-phones", "No-smoking", "Exclamation", "White-exclamation", "Question", "White-question",
+             "Double-exclamation", "Exclamation-question", "Dim", "Bright", "Part-alternation", "Warning", "Children-crossing", "Trident",
+             "Fleur-de-lis", "Beginner", "Recycle", "Check-mark", "Green-check", "Chart-up", "Sparkle", "Green-sparkle",
+             "X-mark", "Globe", "Diamond", "Circled-M", "Cyclone", "Zzz", "ATM", "WC",
+             "Wheelchair", "Parking", "Empty", "Service-charge", "Passport", "Customs", "Baggage", "Baggage-claim",
+             "Mens", "Womens", "Baby", "Restroom", "Litter", "Cinema", "Signal", "Japanese-here",
+             "Symbols", "Information", "ABCD", "abc", "ABC", "NG-button", "OK-button", "Up-button",
+             "Cool-button", "New-button", "Free-button", "Zero", "One", "Two", "Three", "Four",
+             "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Numbers", "Hash-key",
+             "Asterisk", "Play", "Pause", "Play-pause", "Stop", "Record", "Next", "Previous",
+             "Fast-forward", "Rewind", "Up", "Down", "Left-arrow", "Up-triangle", "Down-triangle", "Right-arrow",
+             "Left-arrow", "Up-arrow", "Down-arrow", "Up-right", "Down-right", "Down-left", "Up-left", "Up-down",
+             "Left-right", "Right-curve", "Left-curve", "Up-curve", "Down-curve", "Shuffle", "Repeat", "Repeat-one",
+             "Arrows", "Arrows", "Musical-note", "Notes", "Plus", "Minus", "Divide", "Multiply",
+             "Dollar", "Currency", "Trademark", "Copyright", "Registered", "Wavy-dash", "Curly-loop", "Double-curly",
+             "End-arrow", "Back-arrow", "On-arrow", "Top-arrow", "Soon-arrow", "Check", "Checkbox", "Radio-button",
+             "White-circle", "Black-circle", "Red-circle", "Blue-circle", "Red-triangle-up", "Red-triangle-down", "Orange-diamond", "Blue-diamond",
+             "Orange-diamond", "Blue-diamond", "White-square", "Black-square", "Black-small", "White-small", "Black-medium", "White-medium"
+         };
+         
+         if (index >= 0 && index < names.size()) {
+             return names[index];
+         }
+         return "Unknown";
+     }
+ };
+ 
+ // ----------------
+ // MAIN WINDOW
+ // ----------------
+ 
+ // Main window of the application
+ class MainWindow : public QMainWindow {
+     Q_OBJECT
+     
+ private:
+     // UI elements
+     QWidget* centralWidget;
+     QTabWidget* tabWidget;
+     
+     // Login tab
+     QWidget* loginTab;
+     QLineEdit* serverAddressEdit;
+     QLineEdit* serverPortEdit;
+     QLineEdit* turnServerEdit;
+     QLineEdit* turnPortEdit;
+     QLineEdit* usernameEdit;
+     QPushButton* connectButton;
+     QLabel* statusLabel;
+     
+     // Contacts tab
+     QWidget* contactsTab;
+     QListWidget* contactsList;
+     QPushButton* refreshButton;
+     QPushButton* callButton;
+     QCheckBox* videoCheckBox;
+     QCheckBox* screenShareCheckBox;
+     
+     // Call tab
+     QWidget* callTab;
+     QLabel* callStatusLabel;
+     QLabel* peerNameLabel;
+     QLabel* callDurationLabel;
+     QPushButton* endCallButton;
+     QPushButton* acceptButton;
+     QPushButton* rejectButton;
+     EmojiVisualizer* emojiVisualizer;
+     
+     // Video display widgets
+     QWidget* localVideoWidget;
+     QWidget* remoteVideoWidget;
+     
+     // Text chat (simplified)
+     QTextEdit* chatDisplay;
+     QLineEdit* chatInput;
+     QPushButton* sendButton;
+     
+     // Network handler
+     NetworkHandler* networkHandler;
+     
+     // Timer for call duration
+     QTimer* durationTimer;
+     QTime callDuration;
+     
+ public:
+     MainWindow(QWidget* parent = nullptr) : QMainWindow(parent) {
+         setWindowTitle("PX Encrypted Calling App");
+         setMinimumSize(800, 600);
+         
+         // Create network handler
+         networkHandler = new NetworkHandler(this);
+         
+         // Connect signals and slots
+         connect(networkHandler, &NetworkHandler::registered, this, &MainWindow::onRegistered);
+         connect(networkHandler, &NetworkHandler::error, this, &MainWindow::onError);
+         connect(networkHandler, &NetworkHandler::userListReceived, this, &MainWindow::onUserListReceived);
+         connect(networkHandler, &NetworkHandler::incomingCall, this, &MainWindow::onIncomingCall);
+         connect(networkHandler, &NetworkHandler::callAccepted, this, &MainWindow::onCallAccepted);
+         connect(networkHandler, &NetworkHandler::callRejected, this, &MainWindow::onCallRejected);
+         connect(networkHandler, &NetworkHandler::callEnded, this, &MainWindow::onCallEnded);
+         connect(networkHandler, &NetworkHandler::p2pEstablished, this, &MainWindow::onP2PEstablished);
+         connect(networkHandler, &NetworkHandler::mediaReceived, this, &MainWindow::onMediaReceived);
+         connect(networkHandler, &NetworkHandler::keyExchangeCompleted, this, &MainWindow::onKeyExchangeCompleted);
+         
+         // Create call duration timer
+         durationTimer = new QTimer(this);
+         connect(durationTimer, &QTimer::timeout, this, &MainWindow::updateCallDuration);
+         
+         // Set up UI
+         setupUI();
+     }
+     
+     ~MainWindow() {
+         // Ensure clean disconnect
+         networkHandler->disconnect();
+     }
+     
+ private:
+     void setupUI() {
+         centralWidget = new QWidget();
+         setCentralWidget(centralWidget);
+         
+         // Main layout
+         QVBoxLayout* mainLayout = new QVBoxLayout(centralWidget);
+         
+         // Create tab widget
+         tabWidget = new QTabWidget();
+         mainLayout->addWidget(tabWidget);
+         
+         // Create login tab
+         setupLoginTab();
+         
+         // Create contacts tab
+         setupContactsTab();
+         
+         // Create call tab
+         setupCallTab();
+         
+         // Add tabs
+         tabWidget->addTab(loginTab, "Login");
+         tabWidget->addTab(contactsTab, "Contacts");
+         tabWidget->addTab(callTab, "Active Call");
+         
+         // Disable tabs initially
+         tabWidget->setTabEnabled(1, false);
+         tabWidget->setTabEnabled(2, false);
+     }
+     
+     void setupLoginTab() {
+         loginTab = new QWidget();
+         QVBoxLayout* layout = new QVBoxLayout(loginTab);
+         
+         QGroupBox* serverGroup = new QGroupBox("Server Settings");
+         QFormLayout* serverLayout = new QFormLayout();
+         
+         serverAddressEdit = new QLineEdit("127.0.0.1");
+         serverPortEdit = new QLineEdit(QString::number(DEFAULT_SERVER_PORT));
+         turnServerEdit = new QLineEdit("127.0.0.1");
+         turnPortEdit = new QLineEdit(QString::number(DEFAULT_TURN_PORT));
+         
+         serverLayout->addRow("Server Address:", serverAddressEdit);
+         serverLayout->addRow("Server Port:", serverPortEdit);
+         serverLayout->addRow("TURN Server:", turnServerEdit);
+         serverLayout->addRow("TURN Port:", turnPortEdit);
+         
+         serverGroup->setLayout(serverLayout);
+         layout->addWidget(serverGroup);
+         
+         QGroupBox* userGroup = new QGroupBox("User Information");
+         QFormLayout* userLayout = new QFormLayout();
+         
+         usernameEdit = new QLineEdit();
+         userLayout->addRow("Username:", usernameEdit);
+         
+         userGroup->setLayout(userLayout);
+         layout->addWidget(userGroup);
+         
+         connectButton = new QPushButton("Connect");
+         layout->addWidget(connectButton);
+         
+         statusLabel = new QLabel("Not connected");
+         layout->addWidget(statusLabel);
+         
+         layout->addStretch();
+         
+         // Connect button signal
+         connect(connectButton, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
+     }
+     
+     void setupContactsTab() {
+         contactsTab = new QWidget();
+         QVBoxLayout* layout = new QVBoxLayout(contactsTab);
+         
+         // User list
+         QGroupBox* contactsGroup = new QGroupBox("Online Users");
+         QVBoxLayout* contactsLayout = new QVBoxLayout();
+         
+         contactsList = new QListWidget();
+         contactsLayout->addWidget(contactsList);
+         
+         refreshButton = new QPushButton("Refresh");
+         contactsLayout->addWidget(refreshButton);
+         
+         contactsGroup->setLayout(contactsLayout);
+         layout->addWidget(contactsGroup);
+         
+         // Call options
+         QGroupBox* callGroup = new QGroupBox("Call Options");
+         QVBoxLayout* callLayout = new QVBoxLayout();
+         
+         videoCheckBox = new QCheckBox("Video Call");
+         screenShareCheckBox = new QCheckBox("Screen Sharing");
+         callLayout->addWidget(videoCheckBox);
+         callLayout->addWidget(screenShareCheckBox);
+         
+         callButton = new QPushButton("Call Selected User");
+         callButton->setEnabled(false);
+         callLayout->addWidget(callButton);
+         
+         callGroup->setLayout(callLayout);
+         layout->addWidget(callGroup);
+         
+         // Connect signals
+         connect(refreshButton, &QPushButton::clicked, this, &MainWindow::onRefreshClicked);
+         connect(callButton, &QPushButton::clicked, this, &MainWindow::onCallClicked);
+         connect(contactsList, &QListWidget::itemSelectionChanged, this, &MainWindow::onContactSelectionChanged);
+     }
+     
+     void setupCallTab() {
+         callTab = new QWidget();
+         QVBoxLayout* layout = new QVBoxLayout(callTab);
+         
+         // Call info
+         QGroupBox* infoGroup = new QGroupBox("Call Information");
+         QGridLayout* infoLayout = new QGridLayout();
+         
+         callStatusLabel = new QLabel("Not in a call");
+         peerNameLabel = new QLabel("No peer");
+         callDurationLabel = new QLabel("00:00:00");
+         
+         infoLayout->addWidget(new QLabel("Status:"), 0, 0);
+         infoLayout->addWidget(callStatusLabel, 0, 1);
+         infoLayout->addWidget(new QLabel("Peer:"), 1, 0);
+         infoLayout->addWidget(peerNameLabel, 1, 1);
+         infoLayout->addWidget(new QLabel("Duration:"), 2, 0);
+         infoLayout->addWidget(callDurationLabel, 2, 1);
+         
+         infoGroup->setLayout(infoLayout);
+         layout->addWidget(infoGroup);
+         
+         // Key verification
+         QGroupBox* verifyGroup = new QGroupBox("Security Verification");
+         QVBoxLayout* verifyLayout = new QVBoxLayout();
+         
+         QLabel* verifyLabel = new QLabel("Compare these emojis with your peer to verify the connection is secure:");
+         verifyLayout->addWidget(verifyLabel);
+         
+         emojiVisualizer = new EmojiVisualizer();
+         verifyLayout->addWidget(emojiVisualizer);
+         
+         verifyGroup->setLayout(verifyLayout);
+         layout->addWidget(verifyGroup);
+         
+         // Video displays
+         QHBoxLayout* videoLayout = new QHBoxLayout();
+         
+         localVideoWidget = new QWidget();
+         localVideoWidget->setMinimumSize(320, 240);
+         localVideoWidget->setAutoFillBackground(true);
+         QPalette pal = localVideoWidget->palette();
+         pal.setColor(QPalette::Window, Qt::black);
+         localVideoWidget->setPalette(pal);
+         
+         remoteVideoWidget = new QWidget();
+         remoteVideoWidget->setMinimumSize(320, 240);
+         remoteVideoWidget->setAutoFillBackground(true);
+         remoteVideoWidget->setPalette(pal);
+         
+         videoLayout->addWidget(localVideoWidget);
+         videoLayout->addWidget(remoteVideoWidget);
+         
+         layout->addLayout(videoLayout);
+         
+         // Call control buttons
+         QHBoxLayout* buttonLayout = new QHBoxLayout();
+         
+         acceptButton = new QPushButton("Accept");
+         rejectButton = new QPushButton("Reject");
+         endCallButton = new QPushButton("End Call");
+         
+         acceptButton->setVisible(false);
+         rejectButton->setVisible(false);
+         
+         buttonLayout->addWidget(acceptButton);
+         buttonLayout->addWidget(rejectButton);
+         buttonLayout->addWidget(endCallButton);
+         
+         layout->addLayout(buttonLayout);
+         
+         // Text chat
+         QGroupBox* chatGroup = new QGroupBox("Text Chat");
+         QVBoxLayout* chatLayout = new QVBoxLayout();
+         
+         chatDisplay = new QTextEdit();
+         chatDisplay->setReadOnly(true);
+         chatLayout->addWidget(chatDisplay);
+         
+         QHBoxLayout* chatInputLayout = new QHBoxLayout();
+         chatInput = new QLineEdit();
+         sendButton = new QPushButton("Send");
+         
+         chatInputLayout->addWidget(chatInput);
+         chatInputLayout->addWidget(sendButton);
+         
+         chatLayout->addLayout(chatInputLayout);
+         chatGroup->setLayout(chatLayout);
+         layout->addWidget(chatGroup);
+         
+         // Connect signals
+         connect(acceptButton, &QPushButton::clicked, this, &MainWindow::onAcceptClicked);
+         connect(rejectButton, &QPushButton::clicked, this, &MainWindow::onRejectClicked);
+         connect(endCallButton, &QPushButton::clicked, this, &MainWindow::onEndCallClicked);
+         connect(sendButton, &QPushButton::clicked, this, &MainWindow::onSendClicked);
+         connect(chatInput, &QLineEdit::returnPressed, this, &MainWindow::onSendClicked);
+     }
+     
+     // Slot for connect button
+     void onConnectClicked() {
+         QString serverAddress = serverAddressEdit->text();
+         int serverPort = serverPortEdit->text().toInt();
+         QString turnServer = turnServerEdit->text();
+         int turnPort = turnPortEdit->text().toInt();
+         QString username = usernameEdit->text();
+         
+         if (username.isEmpty()) {
+             QMessageBox::warning(this, "Error", "Please enter a username");
+             return;
+         }
+         
+         statusLabel->setText("Connecting...");
+         connectButton->setEnabled(false);
+         
+         // Connect to server
+         if (!networkHandler->connect(serverAddress.toStdString(), serverPort, 
+                                      turnServer.toStdString(), turnPort)) {
+             statusLabel->setText("Connection failed");
+             connectButton->setEnabled(true);
+             return;
+         }
+         
+         // Register with server
+         if (!networkHandler->registerWithServer(username.toStdString())) {
+             statusLabel->setText("Registration failed");
+             connectButton->setEnabled(true);
+             return;
+         }
+     }
+     
+     // Slot for refresh button
+     void onRefreshClicked() {
+         networkHandler->requestUserList();
+     }
+     
+     // Slot for call button
+     void onCallClicked() {
+         QListWidgetItem* item = contactsList->currentItem();
+         if (!item) {
+             return;
+         }
+         
+         // Get user ID from the item data
+         uint32_t userId = item->data(Qt::UserRole).toUInt();
+         
+         bool video = videoCheckBox->isChecked();
+         bool screenShare = screenShareCheckBox->isChecked();
+         
+         // Start call
+         if (networkHandler->startCall(userId, video, screenShare)) {
+             // Switch to call tab
+             tabWidget->setCurrentIndex(2);
+             
+             // Update UI
+             callStatusLabel->setText("Calling...");
+             peerNameLabel->setText(item->text());
+             
+             // Show/hide buttons
+             acceptButton->setVisible(false);
+             rejectButton->setVisible(false);
+             endCallButton->setVisible(true);
+         }
+     }
+     
+     // Slot for contact selection
+     void onContactSelectionChanged() {
+         callButton->setEnabled(!contactsList->selectedItems().isEmpty());
+     }
+     
+     // Slot for accept button
+     void onAcceptClicked() {
+         bool video = videoCheckBox->isChecked();
+         bool screenShare = screenShareCheckBox->isChecked();
+         
+         if (networkHandler->acceptCall(video, screenShare)) {
+             // Update UI
+             callStatusLabel->setText("Connecting...");
+             
+             // Show/hide buttons
+             acceptButton->setVisible(false);
+             rejectButton->setVisible(false);
+             endCallButton->setVisible(true);
+         }
+     }
+     
+     // Slot for reject button
+     void onRejectClicked() {
+         if (networkHandler->rejectCall()) {
+             // Switch back to contacts tab
+             tabWidget->setCurrentIndex(1);
+             
+             // Update UI
+             callStatusLabel->setText("Not in a call");
+             peerNameLabel->setText("No peer");
+             callDurationLabel->setText("00:00:00");
+             
+             // Clear emoji visualizer
+             emojiVisualizer->setEmojiIndices({});
+         }
+     }
+     
+     // Slot for end call button
+     void onEndCallClicked() {
+         if (networkHandler->endCall()) {
+             // Switch back to contacts tab
+             tabWidget->setCurrentIndex(1);
+             
+             // Update UI
+             callStatusLabel->setText("Not in a call");
+             peerNameLabel->setText("No peer");
+             callDurationLabel->setText("00:00:00");
+             
+             // Stop duration timer
+             durationTimer->stop();
+             
+             // Clear emoji visualizer
+             emojiVisualizer->setEmojiIndices({});
+         }
+     }
+     
+     // Slot for send button
+     void onSendClicked() {
+         QString message = chatInput->text();
+         if (message.isEmpty()) {
+             return;
+         }
+         
+         // Convert message to bytes
+         QByteArray textData = message.toUtf8();
+         std::vector<uint8_t> data(textData.begin(), textData.end());
+         
+         // Send message
+         if (networkHandler->sendMediaData(MediaType::AUDIO, data)) { // Using AUDIO type for text messages for simplicity
+             // Add message to chat display
+             chatDisplay->append("<b>You:</b> " + message);
+             
+             // Clear input
+             chatInput->clear();
+         }
+     }
+     
+     // Slot for registered event
+     void onRegistered(uint32_t clientId) {
+         statusLabel->setText("Connected and registered with ID: " + QString::number(clientId));
+         
+         // Enable contacts tab
+         tabWidget->setTabEnabled(1, true);
+         
+         // Switch to contacts tab
+         tabWidget->setCurrentIndex(1);
+         
+         // Request user list
+         networkHandler->requestUserList();
+     }
+     
+     // Slot for error event
+     void onError(const QString& message) {
+         QMessageBox::warning(this, "Error", message);
+     }
+     
+     // Slot for user list received event
+     void onUserListReceived() {
+         contactsList->clear();
+         
+         auto users = networkHandler->getUsers();
+         for (const auto& user_pair : users) {
+             QListWidgetItem* item = new QListWidgetItem(QString::fromStdString(user_pair.second.username));
+             item->setData(Qt::UserRole, QVariant(user_pair.first));
+             contactsList->addItem(item);
+         }
+     }
+     
+     // Slot for incoming call event
+     void onIncomingCall(uint32_t callerId, const QString& callerName) {
+         // Switch to call tab
+         tabWidget->setCurrentIndex(2);
+         tabWidget->setTabEnabled(2, true);
+         
+         // Update UI
+         callStatusLabel->setText("Incoming call...");
+         peerNameLabel->setText(callerName);
+         
+         // Show accept/reject buttons
+         acceptButton->setVisible(true);
+         rejectButton->setVisible(true);
+         endCallButton->setVisible(false);
+         
+         // Play ring sound (would be implemented in real app)
+         
+         // Show notification dialog
+         QMessageBox::information(this, "Incoming Call", "Incoming call from " + callerName);
+     }
+     
+     // Slot for call accepted event
+     void onCallAccepted() {
+         // Update UI
+         callStatusLabel->setText("Call accepted, establishing secure connection...");
+     }
+     
+     // Slot for call rejected event
+     void onCallRejected() {
+         // Switch back to contacts tab
+         tabWidget->setCurrentIndex(1);
+         
+         // Update UI
+         callStatusLabel->setText("Call rejected");
+         
+         // Show notification
+         QMessageBox::information(this, "Call Rejected", "Your call was rejected");
+     }
+     
+     // Slot for call ended event
+     void onCallEnded() {
+         // Switch back to contacts tab
+         tabWidget->setCurrentIndex(1);
+         
+         // Update UI
+         callStatusLabel->setText("Call ended");
+         peerNameLabel->setText("No peer");
+         callDurationLabel->setText("00:00:00");
+         
+         // Stop duration timer
+         durationTimer->stop();
+         
+         // Clear emoji visualizer
+         emojiVisualizer->setEmojiIndices({});
+         
+         // Clear chat
+         chatDisplay->clear();
+         
+         // Show notification
+         QMessageBox::information(this, "Call Ended", "The call has ended");
+     }
+     
+     // Slot for P2P established event
+     void onP2PEstablished() {
+         // Update UI
+         callStatusLabel->setText("Call connected");
+         
+         // Start duration timer
+         callDuration = QTime(0, 0, 0);
+         durationTimer->start(1000);
+         
+         // Show key verification
+         emojiVisualizer->setEmojiIndices(networkHandler->getEmojiVerification());
+     }
+     
+     // Slot for media received event
+     void onMediaReceived(int type, const QByteArray& data) {
+         MediaType mediaType = static_cast<MediaType>(type);
+         
+         if (mediaType == MediaType::AUDIO) {
+             // For simplicity, treat audio packets as text messages in this demo
+             QString message = QString::fromUtf8(data);
+             chatDisplay->append("<b>Peer:</b> " + message);
+         }
+         else if (mediaType == MediaType::VIDEO) {
+             // Process video data (would be implemented in real app)
+         }
+         else if (mediaType == MediaType::SCREEN) {
+             // Process screen sharing data (would be implemented in real app)
+         }
+     }
+     
+     // Slot for key exchange completed event
+     void onKeyExchangeCompleted() {
+         // Update emoji visualization
+         emojiVisualizer->setEmojiIndices(networkHandler->getEmojiVerification());
+     }
+     
+     // Slot for updating call duration
+     void updateCallDuration() {
+         callDuration = callDuration.addSecs(1);
+         callDurationLabel->setText(callDuration.toString("hh:mm:ss"));
+     }
+ };
+ 
+ // ----------------
+ // MAIN FUNCTION
+ // ----------------
+ 
+ int main(int argc, char** argv) {
+     QApplication app(argc, argv);
+     
+     // Apply style
+     QApplication::setStyle(QStyleFactory::create("Fusion"));
+     
+     // Create main window
+     MainWindow mainWindow;
+     mainWindow.show();
+     
+     return app.exec();
+ }
+ 
+ // Include generated MOC (Meta-Object Compiler) code
+ #include "client.moc"
+ 
