@@ -18,7 +18,7 @@ import pymssql         # MS SQL
 # import slixmpp      # XMPP (modern and maintained) - REMOVED
 import hashlib         # for hash check
 import zipfile         # ZIP bruteforce
-# import PyPDF2       # PDF password check -- REMOVED
+import pikepdf         # PDF password check (added)
 import bcrypt          # bcrypt hash
 
 # ----------- Helper Functions ------------
@@ -243,46 +243,6 @@ def irc_bruteforce(username, password, target_ip, port=6667, debug=False):
             print_dbg(f"IRC fail: {username}:{password} -> {e}", debug)
         return False
 
-# XMPP (using slixmpp)
-# class XmppBrute(slixmpp.ClientXMPP):
-#     def __init__(self, jid, password):
-#         super().__init__(jid, password)
-#         self.success = False
-#         self.add_event_handler("session_start", self.start)
-#         self.add_event_handler("failed_auth", self.failed)
-#         self.add_event_handler("disconnected", self.disconnected)
-#         self.connect_error = None
-
-#     async def start(self, event):
-#         self.success = True
-#         self.disconnect()
-
-#     async def failed(self, event):
-#         self.success = False
-#         self.disconnect()
-
-#     async def disconnected(self, event):
-#         pass
-
-# def xmpp_bruteforce(username, password, target_ip, port=5222, debug=False):
-#     jid = username # Should be a full JID like user@domain
-#     xmpp = XmppBrute(jid, password)
-#     try:
-#         # Connect to a specific server/port
-#         if xmpp.connect((target_ip, port), use_tls=True):
-#             xmpp.process(forever=False, timeout=5)
-#             if xmpp.success:
-#                 return True
-#             else:
-#                 print_dbg(f"XMPP fail: {username}:{password} -> authentication failed", debug)
-#                 return False
-#         else:
-#             print_error(f"XMPP connection refused or timed out for {target_ip}:{port}", debug)
-#             return False
-#     except Exception as e:
-#         print_dbg(f"XMPP error {username}:{password} -> {e}", debug)
-#         return False
-
 # Hash bruteforce (try multiple hash types)
 def hash_bruteforce(target_hash, password_list, debug=False):
     hash_types = [
@@ -329,6 +289,7 @@ def zip_bruteforce(zip_path, password_list, debug=False):
             try:
                 zf.extractall(pwd=pwd_bytes)
                 print(f"[+] Found ZIP password: {pwd}")
+                print("[*] ZIP password found.")
                 return pwd
             except RuntimeError:
                 print_dbg(f"ZIP fail: {pwd}", debug)
@@ -337,6 +298,33 @@ def zip_bruteforce(zip_path, password_list, debug=False):
         return None
     except Exception as e:
         print(f"[-] ZIP file error: {e}")
+        return None
+
+# PDF file bruteforce using pikepdf
+def pdf_bruteforce(pdf_path, password_list, debug=False):
+    found = False
+    try:
+        for pwd in password_list:
+            password = pwd.strip()
+            try:
+                with pikepdf.open(pdf_path, password=password):
+                    print(f"[+] Found PDF password: {password}")
+                    found = True
+                    break
+            except pikepdf.PasswordError:
+                print_dbg(f"PDF fail: {password}", debug)
+                continue
+            except Exception as e:
+                print_dbg(f"PDF error for {password}: {e}", debug)
+                continue
+        if found:
+            print("[*] PDF password found.")
+            return password
+        else:
+            print("[-] PDF password not found.")
+            return None
+    except FileNotFoundError as e:
+        print(f"[-] PDF file error: {e}")
         return None
 
 # ----------- Multiprocessing BruteForce Manager ------------
@@ -370,7 +358,7 @@ def main():
     parser.add_argument("--dbg", action="store_true", help="Enable debug verbose output")
     parser.add_argument("-p", "--port", type=int, help="Port number if applicable")
     parser.add_argument("-S", "--ssl", action="store_true", help="Use SSL (only for SMTP, HTTP/HTTPS)")
-    parser.add_argument("-f", "--file", help="File path (for zip/hash bruteforce)")
+    parser.add_argument("-f", "--file", help="File path (for zip/hash/pdf bruteforce)")
 
     args = parser.parse_args()
 
@@ -403,7 +391,9 @@ def main():
         if file_lower.endswith(".zip"):
             zip_bruteforce(args.file, passwords, debug=args.dbg)
             return
-        # PDF support removed
+        elif file_lower.endswith(".pdf"):
+            pdf_bruteforce(args.file, passwords, debug=args.dbg)
+            return
         elif file_lower.endswith(".hash"):
             try:
                 with open(args.file, 'r') as f:
@@ -477,9 +467,6 @@ def main():
         target_func = lambda u, p: mssql_bruteforce(u, p, target_ip, port=target_port or 1433, debug=args.dbg)
     elif proto == "irc":
         target_func = lambda u, p: irc_bruteforce(u, p, target_ip, port=target_port or 6667, debug=args.dbg)
-    # REMOVED XMPP support
-    # elif proto == "xmpp":
-    #     target_func = lambda u, p: xmpp_bruteforce(u, p, target_ip, port=target_port or 5222, debug=args.dbg)
     else:
         print(f"[-] Protocol {proto} not implemented.")
         sys.exit(1)
