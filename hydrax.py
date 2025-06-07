@@ -19,6 +19,7 @@ import slixmpp         # XMPP (modern and maintained)
 import hashlib         # for hash check
 import zipfile         # ZIP bruteforce
 import PyPDF2          # PDF password check
+import bcrypt          # bcrypt hash
 
 # ----------- Helper Functions ------------
 
@@ -282,21 +283,41 @@ def xmpp_bruteforce(username, password, target_ip, port=5222, debug=False):
         print_dbg(f"XMPP error {username}:{password} -> {e}", debug)
         return False
 
-# Hash bruteforce (only password list, no username)
-def hash_bruteforce(target_hash, hash_type, password_list, debug=False):
-    hash_func = getattr(hashlib, hash_type, None)
-    if not hash_func:
-        print(f"[-] Unsupported hash type {hash_type}")
-        return
-    for pwd in password_list:
-        pwd = pwd.strip()
-        h = hash_func(pwd.encode()).hexdigest()
-        if h == target_hash:
-            print(f"[+] Found password for hash {target_hash}: {pwd}")
-            return pwd
-        else:
-            print_dbg(f"Hash {hash_type} fail: {pwd}", debug)
-    print("[-] Password not found.")
+# Hash bruteforce (try multiple hash types)
+def hash_bruteforce(target_hash, password_list, debug=False):
+    hash_types = [
+        ('sha256', lambda pwd: hashlib.sha256(pwd.encode()).hexdigest()),
+        ('blake2b', lambda pwd: hashlib.blake2b(pwd.encode()).hexdigest()),
+        ('sha512', lambda pwd: hashlib.sha512(pwd.encode()).hexdigest()),
+        ('sha1', lambda pwd: hashlib.sha1(pwd.encode()).hexdigest()),
+        ('md5', lambda pwd: hashlib.md5(pwd.encode()).hexdigest()),
+    ]
+    # Try normal hashes
+    for hash_name, hash_func in hash_types:
+        for pwd in password_list:
+            pwd = pwd.strip()
+            h = hash_func(pwd)
+            if h == target_hash:
+                print(f"[+] Found password for hash {target_hash}: {pwd} (algorithm: {hash_name})")
+                return pwd
+            else:
+                print_dbg(f"Hash {hash_name} fail: {pwd}", debug)
+    # Try bcrypt
+    try:
+        target_hash_bytes = target_hash.encode()
+        for pwd in password_list:
+            pwd = pwd.strip()
+            try:
+                if bcrypt.checkpw(pwd.encode(), target_hash_bytes):
+                    print(f"[+] Found password for bcrypt hash {target_hash}: {pwd} (algorithm: bcrypt)")
+                    return pwd
+                else:
+                    print_dbg(f"Hash bcrypt fail: {pwd}", debug)
+            except Exception as e:
+                print_dbg(f"Hash bcrypt error for {pwd}: {e}", debug)
+    except Exception as e:
+        print_dbg(f"bcrypt global error: {e}", debug)
+    print("[-] Password not found for any supported hash type.")
     return None
 
 # Zip file bruteforce
@@ -360,7 +381,7 @@ def multi_worker(target_func, usernames, passwords, debug, result_flag):
 
 def main():
     parser = argparse.ArgumentParser(description="Advanced multi-protocol bruteforcer for ethical and academic use only.")
-    parser.add_argument("target", help="Target URL or IP with protocol prefix (e.g., ssh://1.2.3.4, ftp://1.2.3.4, http://example.com)")
+    parser.add_argument("target", nargs="?", help="Target URL or IP with protocol prefix (e.g., ssh://1.2.3.4, ftp://1.2.3.4, http://example.com)")
     parser.add_argument("-l", "--username", help="Single username to test")
     parser.add_argument("-L", "--userlist", help="File with multiple usernames")
     parser.add_argument("-P", "--passlist", required=True, help="Password list file")
@@ -368,7 +389,7 @@ def main():
     parser.add_argument("--dbg", action="store_true", help="Enable debug verbose output")
     parser.add_argument("-p", "--port", type=int, help="Port number if applicable")
     parser.add_argument("-S", "--ssl", action="store_true", help="Use SSL (only for SMTP, HTTP/HTTPS)")
-    parser.add_argument("-f", "--file", help="File path (for zip/pdf bruteforce or hash file)")
+    parser.add_argument("-f", "--file", help="File path (for zip/pdf/hash bruteforce)")
 
     args = parser.parse_args()
 
@@ -392,6 +413,33 @@ def main():
             passwords = [line.strip() for line in f if line.strip()]
     except Exception as e:
         print(f"[-] Could not open password list: {e}")
+        sys.exit(1)
+
+    # ---- FILE MODE -----
+    if args.file and not args.target:
+        # Decide based on file extension
+        file_lower = args.file.lower()
+        if file_lower.endswith(".zip"):
+            zip_bruteforce(args.file, passwords, debug=args.dbg)
+            return
+        elif file_lower.endswith(".pdf"):
+            pdf_bruteforce(args.file, passwords, debug=args.dbg)
+            return
+        elif file_lower.endswith(".hash"):
+            try:
+                with open(args.file, 'r') as f:
+                    target_hash = f.readline().strip()
+                hash_bruteforce(target_hash, passwords, debug=args.dbg)
+            except Exception as e:
+                print(f"[-] Error reading hash file: {e}")
+            return
+        else:
+            print(f"[-] Unknown file type for brute-force: {args.file}")
+            sys.exit(1)
+
+    # ---- NETWORK MODE -----
+    if not args.target:
+        print("[-] Please specify a network target (protocol://ip) or a file with -f.")
         sys.exit(1)
 
     # Parse target protocol and host
@@ -429,8 +477,6 @@ def main():
             target_port = 465 if args.ssl else 25
     elif proto in ["http", "https"]:
         target_ip = target_rest
-    elif proto in ["pdf", "zip", "hash"]:
-        target_ip = None
     else:
         print(f"[-] Unsupported protocol: {proto}")
         sys.exit(1)
@@ -454,30 +500,6 @@ def main():
         target_func = lambda u, p: irc_bruteforce(u, p, target_ip, port=target_port or 6667, debug=args.dbg)
     elif proto == "xmpp":
         target_func = lambda u, p: xmpp_bruteforce(u, p, target_ip, port=target_port or 5222, debug=args.dbg)
-    elif proto == "hash":
-        if not args.file:
-            print("[-] For hash bruteforce, provide -f hash_file")
-            sys.exit(1)
-        try:
-            with open(args.file, 'r') as f:
-                target_hash = f.readline().strip()
-            hash_type = "sha256"  # Example, can be parameterized
-            hash_bruteforce(target_hash, hash_type, passwords, debug=args.dbg)
-        except Exception as e:
-            print(f"[-] Error reading hash file: {e}")
-        return
-    elif proto == "zip":
-        if not args.file:
-            print("[-] For ZIP bruteforce, provide -f zip_file")
-            sys.exit(1)
-        zip_bruteforce(args.file, passwords, debug=args.dbg)
-        return
-    elif proto == "pdf":
-        if not args.file:
-            print("[-] For PDF bruteforce, provide -f pdf_file")
-            sys.exit(1)
-        pdf_bruteforce(args.file, passwords, debug=args.dbg)
-        return
     else:
         print(f"[-] Protocol {proto} not implemented.")
         sys.exit(1)
