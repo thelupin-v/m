@@ -18,7 +18,7 @@ import pymssql         # MS SQL
 # import slixmpp      # XMPP (modern and maintained) - REMOVED
 import hashlib         # for hash check
 import zipfile         # ZIP bruteforce
-import PyPDF2          # PDF password check
+# import PyPDF2       # PDF password check -- REMOVED
 import bcrypt          # bcrypt hash
 
 # ----------- Helper Functions ------------
@@ -339,25 +339,6 @@ def zip_bruteforce(zip_path, password_list, debug=False):
         print(f"[-] ZIP file error: {e}")
         return None
 
-# PDF bruteforce
-def pdf_bruteforce(pdf_path, password_list, debug=False):
-    try:
-        reader = PyPDF2.PdfReader(pdf_path)
-        for pwd in password_list:
-            try:
-                if reader.decrypt(pwd.strip()) == 1:
-                    print(f"[+] Found PDF password: {pwd}")
-                    return pwd
-                else:
-                    print_dbg(f"PDF fail: {pwd}", debug)
-            except Exception:
-                continue
-        print("[-] PDF password not found.")
-        return None
-    except Exception as e:
-        print(f"[-] PDF file error: {e}")
-        return None
-
 # ----------- Multiprocessing BruteForce Manager ------------
 
 def multi_worker(target_func, usernames, passwords, debug, result_flag):
@@ -389,7 +370,7 @@ def main():
     parser.add_argument("--dbg", action="store_true", help="Enable debug verbose output")
     parser.add_argument("-p", "--port", type=int, help="Port number if applicable")
     parser.add_argument("-S", "--ssl", action="store_true", help="Use SSL (only for SMTP, HTTP/HTTPS)")
-    parser.add_argument("-f", "--file", help="File path (for zip/pdf/hash bruteforce)")
+    parser.add_argument("-f", "--file", help="File path (for zip/hash bruteforce)")
 
     args = parser.parse_args()
 
@@ -422,9 +403,7 @@ def main():
         if file_lower.endswith(".zip"):
             zip_bruteforce(args.file, passwords, debug=args.dbg)
             return
-        elif file_lower.endswith(".pdf"):
-            pdf_bruteforce(args.file, passwords, debug=args.dbg)
-            return
+        # PDF support removed
         elif file_lower.endswith(".hash"):
             try:
                 with open(args.file, 'r') as f:
