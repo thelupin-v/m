@@ -20,6 +20,7 @@ from datetime import datetime
 import logging
 import configparser
 from typing import Dict, List, Optional, Tuple
+from PySide6.QtCore import QMetaObject
 
 # GUI and System
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
