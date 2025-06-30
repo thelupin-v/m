@@ -6,27 +6,7 @@ CA_CERT_PATH = "/home/ntb/Stažené/mitmproxy-ca-cert.pem"
 
 # The JS overlay to inject
 OVERLAY_JS = """
-(function() {
-    let overlay = document.createElement("div");
-    overlay.style.position = "fixed";
-    overlay.style.top = 0;
-    overlay.style.left = 0;
-    overlay.style.width = "100%";
-    overlay.style.height = "100%";
-    overlay.style.backgroundColor = "rgba(255,0,0,0.9)";
-    overlay.style.zIndex = 999999;
-    overlay.style.color = "#fff";
-    overlay.style.display = "flex";
-    overlay.style.flexDirection = "column";
-    overlay.style.justifyContent = "center";
-    overlay.style.alignItems = "center";
-    overlay.innerHTML = `
-        <h1 style="font-size: 32px; margin: 0;">⚠️ NEBEZPEČNÁ STRÁNKA</h1>
-        <p style="font-size: 20px;">Tato stránka byla označena jako potenciálně škodlivá.</p>
-        <button onclick="location.href='https://www.google.com'" style="margin-top:20px;padding:10px 20px;font-size:16px;">Opustit stránku</button>
-    `;
-    document.body.appendChild(overlay);
-})();
+((here js to inject))
 """
 
 INJECT_SNIPPET = f"<script>{OVERLAY_JS}</script>"
