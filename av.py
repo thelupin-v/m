@@ -72,7 +72,11 @@ CONFIG_DIR = Path.home() / '.vtx'
 QUARANTINE_DIR = CONFIG_DIR / 'quarantine'
 LOGS_DIR = CONFIG_DIR / 'logs'
 DB_PATH = CONFIG_DIR / 'vtx.db'
-CERT_PATH = Path.home() / 'Stažené' / 'mitmproxy-ca-cert.pem'
+from pathlib import Path
+import os
+
+# ... somewhere near top of your file:
+CERT_PATH = Path('/home/ntb/mitmproxy-ca-cert.pem')
 
 # Encryption key for quarantine
 ENCRYPTION_KEY = bytes.fromhex('eeef64a99c54822173ddd8f895e0a43273dc0e4a44ca9560052fb5a76b2fd8f7')
@@ -573,99 +577,112 @@ class NetworkMonitor:
         """Add domain to block list"""
         self.blocked_domains.add(domain)
         logger.info(f"Domain blocked: {domain}")
-
 class HardwareMonitor:
     """Monitor webcam and microphone access"""
-    
+
     def __init__(self, parent_window=None):
         self.monitoring = False
         self.parent_window = parent_window
         self.active_processes = set()
-    
+        self.allowed_mic_processes = set()
+        self.real_mic_processes = {'pulseaudio', 'pipewire', 'AudioDSP', 'alsa', 'audio', 'systemd', 'jackd', 'JACK', 'aplay', 'arecord'}  # List of trusted/real mic processes
+
     def start_monitoring(self):
         """Start hardware access monitoring"""
         self.monitoring = True
         threading.Thread(target=self._monitor_hardware, daemon=True).start()
         logger.info("Hardware monitoring started")
-    
+
     def stop_monitoring(self):
         """Stop hardware access monitoring"""
         self.monitoring = False
         logger.info("Hardware monitoring stopped")
-    
+
     def _monitor_hardware(self):
         """Monitor processes accessing webcam/microphone"""
         while self.monitoring:
             try:
                 current_processes = set()
-                
-                for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+
+                for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'username']):
                     try:
-                        # Check for webcam/mic usage indicators
                         cmdline = ' '.join(proc.info['cmdline'] or [])
                         name = proc.info['name']
-                        
+                        username = proc.info['username']
+
                         # Common indicators of camera/mic usage
                         camera_indicators = [
                             '/dev/video', 'v4l2', 'camera', 'webcam',
                             'libv4l', 'uvcvideo'
                         ]
-                        
                         mic_indicators = [
                             'alsa', 'pulse', 'microphone', 'audio',
                             '/dev/dsp', 'record'
                         ]
-                        
+
                         hardware_access = False
                         access_type = ""
-                        
+
                         for indicator in camera_indicators:
-                            if indicator in cmdline.lower() or indicator in name.lower():
+                            if indicator in cmdline.lower() or indicator in (name or "").lower():
                                 hardware_access = True
                                 access_type = "camera"
                                 break
-                        
+
                         if not hardware_access:
                             for indicator in mic_indicators:
-                                if indicator in cmdline.lower() or indicator in name.lower():
+                                if indicator in cmdline.lower() or indicator in (name or "").lower():
                                     hardware_access = True
                                     access_type = "microphone"
                                     break
-                        
+
                         if hardware_access:
                             proc_id = (proc.info['pid'], name, access_type)
                             current_processes.add(proc_id)
-                            
+                            is_real_mic = (
+                                access_type == "microphone" and
+                                (name in self.real_mic_processes or any(real in (name or "") for real in self.real_mic_processes))
+                            )
+
+                            is_allowed = (proc.info['pid'], name) in self.allowed_mic_processes
+
                             if proc_id not in self.active_processes:
-                                self._notify_hardware_access(name, access_type, proc.info['pid'])
-                    
+                                # Only notify if not a real mic access, or not yet allowed
+                                if access_type == "microphone":
+                                    if not is_real_mic and not is_allowed:
+                                        self._notify_hardware_access(name, access_type, proc.info['pid'])
+                                else:
+                                    # For camera: always notify (can be changed to allow list if needed)
+                                    self._notify_hardware_access(name, access_type, proc.info['pid'])
+
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         continue
-                
+
                 self.active_processes = current_processes
                 time.sleep(3)
-                
+
             except Exception as e:
                 logger.error(f"Error monitoring hardware: {e}")
                 time.sleep(10)
-    
+
     def _notify_hardware_access(self, process_name: str, access_type: str, pid: int):
         """Notify user of hardware access attempt"""
         message = f"Process '{process_name}' (PID: {pid}) is trying to access {access_type}"
         logger.warning(message)
-        
+
         if self.parent_window:
-            # Show notification dialog
             try:
-                from PySide6.QtCore import QMetaObject, Qt
                 QMetaObject.invokeMethod(
                     self.parent_window,
-                    "_show_hardware_notification",
+                    "_show_hardware_notification_with_permission",  # NEW method name
                     Qt.QueuedConnection,
                     message, process_name, access_type, pid
                 )
             except Exception as e:
                 logger.error(f"Error showing hardware notification: {e}")
+
+
+
 
 class ProxyManager:
     """Manages mitmproxy for HTTPS/HTTP interception"""
@@ -1140,6 +1157,41 @@ class AVMainWindow(QMainWindow):
         self.watermark = FloatingWatermark(self)
         self.watermark.show()
     
+    # Replace _show_hardware_notification with:
+    def _show_hardware_notification_with_permission(self, message, process_name, access_type, pid):
+        """Show hardware access notification with allow/block for unknown mic access"""
+        try:
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle(f"VTX - {access_type.title()} Access Detected")
+            msg_box.setIcon(QMessageBox.Warning)
+            msg_box.setText(f"Hardware Access Detected\n\n{message}")
+            msg_box.setInformativeText("Do you want to allow this access?")
+
+            allow_btn = msg_box.addButton("Allow", QMessageBox.AcceptRole)
+            block_btn = msg_box.addButton("Block", QMessageBox.RejectRole)
+
+            msg_box.exec()
+
+            if msg_box.clickedButton() == block_btn:
+                logger.info(f"User chose to block hardware access for {process_name}")
+                try:
+                    proc = psutil.Process(pid)
+                    proc.terminate()
+                    self.show_notification("Hardware Access Blocked",
+                                         f"Blocked {access_type} access for {process_name}")
+                except Exception as e:
+                    logger.error(f"Error terminating process: {e}")
+            else:
+                logger.info(f"User allowed hardware access for {process_name}")
+                # Only add to allowed if it's a microphone, so we don't keep asking for the same process
+                if access_type == "microphone":
+                    if hasattr(self.hardware_monitor, 'allowed_mic_processes'):
+                        self.hardware_monitor.allowed_mic_processes.add((pid, process_name))
+
+        except Exception as e:
+            logger.error(f"Error showing hardware notification: {e}")
+
+
     def setup_ui(self):
         """Setup main window UI"""
         self.setWindowTitle("VTX Antivirus - Professional Protection")
