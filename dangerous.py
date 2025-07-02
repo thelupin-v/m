@@ -1,32 +1,49 @@
+import sys
+import asyncio
+from mitmproxy.tools.dump import DumpMaster
+from mitmproxy.options import Options
 from mitmproxy import http
-from mitmproxy import ctx
 
-# Path to your mitmproxy CA certificate (for reference in instructions, not used directly here)
-CA_CERT_PATH = "(path to 2sjf.pem)"
+if len(sys.argv) != 3:
+    print("Usage: python3 0.py <url to inject the js file> <js file to inject>")
+    sys.exit(1)
 
-# The JS overlay to inject
-OVERLAY_JS = """
-((here the js))
-"""
+TARGET_URL = sys.argv[1]
+JS_FILE_PATH = sys.argv[2]
+
+try:
+    with open(JS_FILE_PATH, "r", encoding="utf-8") as f:
+        OVERLAY_JS = f.read()
+except Exception as e:
+    print(f"Failed to read JS file '{JS_FILE_PATH}': {e}")
+    sys.exit(1)
 
 INJECT_SNIPPET = f"<script>{OVERLAY_JS}</script>"
 
 class OverlayInjector:
-    def __init__(self):
-        self.monitored_urls = []
-
     def response(self, flow: http.HTTPFlow):
-        # Only inject into HTML documents
-        if "text/html" in flow.response.headers.get("content-type", ""):
-            ctx.log.info(f"Injecting overlay into {flow.request.pretty_url}")
+        if (
+            flow.request.pretty_url == TARGET_URL and
+            "text/html" in flow.response.headers.get("content-type", "")
+        ):
+            print(f"Injecting overlay into {flow.request.pretty_url}")
             content = flow.response.text
-            # Try injecting before closing </body>, fallback to end of document
             if "</body>" in content:
                 content = content.replace("</body>", f"{INJECT_SNIPPET}</body>")
             else:
                 content += INJECT_SNIPPET
             flow.response.text = content
-            self.monitored_urls.append(flow.request.pretty_url)
-            ctx.log.info(f"Monitored URLs: {self.monitored_urls}")
 
-addons = [OverlayInjector()]
+async def amain():
+    opts = Options(listen_host='127.0.0.1', listen_port=8080, ssl_insecure=True)
+    m = DumpMaster(opts, with_termlog=False, with_dumper=False)
+    m.addons.add(OverlayInjector())
+    try:
+        print("Starting proxy on 127.0.0.1:8080")
+        await m.run()
+    except KeyboardInterrupt:
+        print("Shutting down...")
+        await m.shutdown()
+
+if __name__ == "__main__":
+    asyncio.run(amain())
